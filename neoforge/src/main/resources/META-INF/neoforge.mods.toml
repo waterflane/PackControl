@@ -1,0 +1,36 @@
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "GNU GPL 3.0"
+
+[[mods]]
+modId = "packcontrol"
+version = "${version}"
+displayName = "PackControl"
+authors = "waterflane"
+description = '''
+A client-side modpack synchronization dashboard prepared for Packwiz and GitHub integration.
+'''
+
+[[mixins]]
+config = "packcontrol-common.mixins.json"
+
+[[dependencies.packcontrol]]
+modId = "neoforge"
+type = "required"
+versionRange = "[21,)"
+ordering = "NONE"
+side = "CLIENT"
+
+[[dependencies.packcontrol]]
+modId = "minecraft"
+type = "required"
+versionRange = "[1.21.1,1.22)"
+ordering = "NONE"
+side = "CLIENT"
+
+[[dependencies.packcontrol]]
+modId = "architectury"
+type = "required"
+versionRange = "[13.0.8,)"
+ordering = "AFTER"
+side = "CLIENT"

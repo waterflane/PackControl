@@ -1,0 +1,71 @@
+plugins {
+    id 'dev.architectury.loom' version '1.14-SNAPSHOT' apply false
+    id 'architectury-plugin' version '3.4-SNAPSHOT'
+    id 'com.github.johnrengelman.shadow' version '8.1.1' apply false
+}
+
+architectury {
+    minecraft = project.minecraft_version
+}
+
+allprojects {
+    group = rootProject.maven_group
+    version = rootProject.mod_version
+}
+
+subprojects {
+    apply plugin: 'dev.architectury.loom'
+    apply plugin: 'architectury-plugin'
+    apply plugin: 'maven-publish'
+
+    base {
+        archivesName = "$rootProject.archives_name-$project.name"
+    }
+
+    repositories {
+    }
+
+    dependencies {
+        minecraft "net.minecraft:minecraft:$rootProject.minecraft_version"
+        mappings loom.officialMojangMappings()
+    }
+
+    java {
+        withSourcesJar()
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.release = 21
+    }
+
+    publishing {
+        publications {
+            mavenJava(MavenPublication) {
+                artifactId = base.archivesName.get()
+                from components.java
+            }
+        }
+    }
+}
+
+tasks.register('releaseJars', Copy) {
+    group = 'build'
+    description = 'Copies loader-ready PackControl jars into the root release directory.'
+
+    dependsOn ':fabric:build', ':forge:build', ':neoforge:build'
+
+    into layout.projectDirectory.dir('release')
+    from(project(':fabric').layout.buildDirectory.file("libs/${archives_name}-fabric-${mod_version}.jar"))
+    from(project(':forge').layout.buildDirectory.file("libs/${archives_name}-forge-${mod_version}.jar"))
+    from(project(':neoforge').layout.buildDirectory.file("libs/${archives_name}-neoforge-${mod_version}.jar"))
+}
+
+gradle.projectsEvaluated {
+    def buildTask = tasks.findByName('build')
+    if (buildTask != null) {
+        buildTask.finalizedBy(tasks.named('releaseJars'))
+    }
+}

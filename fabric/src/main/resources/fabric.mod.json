@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "packcontrol",
+  "version": "${version}",
+  "name": "PackControl",
+  "description": "A client-side modpack synchronization dashboard prepared for Packwiz and GitHub integration.",
+  "authors": [
+    "waterflane"
+  ],
+  "contact": {
+    "homepage": "https://github.com/packwiz/packwiz"
+  },
+  "license": "GNU GPL 3.0",
+  "environment": "client",
+  "entrypoints": {
+    "main": [
+      "org.wodichka.packcontrol.fabric.PackControlFabric"
+    ]
+  },
+  "mixins": [
+    "packcontrol-common.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.2",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "architectury": ">=13.0.8",
+    "fabric-api": "*"
+  }
+}
