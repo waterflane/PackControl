@@ -24,29 +24,30 @@ public record PackControlUiState(
         List<String> activity
 ) {
     public static PackControlUiState placeholder() {
-        PackControlConfig config = PackControlConfig.get();
+        PackControlConfig.PackControlUserConfig user = PackControlConfig.user();
+        PackControlConfig.PackControlPackConfig pack = PackControlConfig.pack();
         return new PackControlUiState(
-                config.installedVersion,
-                config.latestKnownVersion,
-                config.updateChannel,
-                config.branchDisplay(),
-                config.updateModeDisplay(),
-                config.lastUpdateCheck,
-                config.repositoryDisplay(),
-                config.useGitHubReleases ? "Enabled, not connected" : "Disabled in config",
+                pack.installedVersion,
+                pack.latestKnownVersion,
+                pack.updateChannel,
+                pack.branchDisplay(),
+                user.autoUpdate ? "Auto update enabled" : "Manual updates only",
+                pack.lastUpdateCheck,
+                pack.repositoryDisplay(),
+                user.useGitHubReleases ? "Enabled, not connected" : "Disabled in user config",
                 "Planned",
                 "Planned",
                 "Not connected",
-                config.packwizManifestPath,
-                config.packwizStatusDisplay(),
-                "Unknown",
-                config.includeOptionalFiles ? "Included" : "Excluded by default",
-                config.verifyAfterUpdate ? "Verify after update" : "Not checked",
+                pack.packwizManifestPath,
+                "Index: " + pack.packwizIndexPath,
+                pack.lastGeneratedFileCount == 0 ? "Unknown" : String.valueOf(pack.lastGeneratedFileCount),
+                user.includeOptionalFiles ? "Included" : "Excluded by default",
+                pack.lastGenerationStatus,
                 List.of(
-                        "Config file: config/packcontrol.json.",
-                        "Repository and branch are loaded from the PackControl config.",
-                        "Auto update is " + (config.autoUpdate ? "enabled" : "disabled") + "; manual confirmation is " + (config.requireManualConfirmation ? "required" : "not required") + ".",
-                        "Packwiz sync remains UI-only until the update engine is implemented."
+                        "User config: config/packcontrol-user.json.",
+                        "Pack config: packcontrol-pack.json in the current game directory.",
+                        "Last Packwiz generation: " + pack.lastGeneratedAt + ".",
+                        "GitHub push remains reserved for the next implementation stage."
                 )
         );
     }

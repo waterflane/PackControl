@@ -9,6 +9,6 @@ import org.wodichka.packcontrol.config.PackControlConfig;
 public final class PackControlNeoForge {
     public PackControlNeoForge() {
         PackControl.init();
-        PackControlConfig.load(FMLPaths.CONFIGDIR.get());
+        PackControlConfig.load(FMLPaths.CONFIGDIR.get(), FMLPaths.GAMEDIR.get());
     }
 }

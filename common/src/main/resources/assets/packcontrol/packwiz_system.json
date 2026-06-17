@@ -1,0 +1,12 @@
+{
+  "system": "PackControl Packwiz Generator",
+  "packwizCompatible": true,
+  "packFormat": "packwiz:1.1.0",
+  "indexHashFormat": "sha256",
+  "generator": "built-in",
+  "notes": [
+    "PackControl writes pack.toml and index.toml directly without requiring packwiz.exe.",
+    "GitHub upload/push is intentionally reserved for a later implementation stage.",
+    "Per-pack file selection is stored in packcontrol-pack.json."
+  ]
+}

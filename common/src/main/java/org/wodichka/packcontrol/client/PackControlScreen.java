@@ -6,10 +6,16 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import org.wodichka.packcontrol.config.PackControlConfig;
+import org.wodichka.packcontrol.packwiz.PackControlPresetService;
+import org.wodichka.packcontrol.packwiz.PackFileSelectionService;
+import org.wodichka.packcontrol.packwiz.PackFileTreeService;
+import org.wodichka.packcontrol.packwiz.PackwizGenerator;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -29,37 +35,112 @@ public final class PackControlScreen extends Screen {
     private static final int MUTED = 0xFF9EA7BC;
     private static final int WARNING = 0xFFFFD863;
     private static final int GOOD = 0xFF72E0A2;
+    private static final int ERROR = 0xFFFF7D7D;
+    private static final int TREE_ROWS_PER_PAGE = 8;
+    private static final int TREE_ROW_HEIGHT = 18;
 
     private final Screen parent;
     private final PackControlUiState state;
+    private final View view;
+    private final int filePage;
     private final List<Renderable> widgets = new ArrayList<>();
-    private Component notice = Component.translatable("packcontrol.notice.ready");
+    private PackFileSelectionService.PackFileScanResult scanResult;
+    private PackFileTreeService.PackFileTreeView treeView;
+    private EditBox customPatternBox;
+    private Component notice;
 
     public PackControlScreen(Screen parent) {
+        this(parent, View.DASHBOARD, 0, Component.translatable("packcontrol.notice.ready"));
+    }
+
+    private PackControlScreen(Screen parent, View view, int filePage) {
+        this(parent, view, filePage, Component.translatable("packcontrol.notice.ready"));
+    }
+
+    private PackControlScreen(Screen parent, View view, int filePage, Component notice) {
         super(Component.translatable("packcontrol.screen.title"));
         this.parent = parent;
+        this.view = view;
+        this.filePage = Math.max(0, filePage);
+        this.notice = notice;
         this.state = PackControlUiState.placeholder();
     }
 
     @Override
     protected void init() {
         widgets.clear();
+        scanResult = PackFileSelectionService.scan();
+        treeView = PackFileTreeService.view(filePage, TREE_ROWS_PER_PAGE);
+
         int left = contentLeft();
         int top = contentTop();
+        int panelTop = panelTop(top);
+        int contentWidth = contentWidth();
         int leftWidth = leftPanelWidth();
         int buttonWidth = leftWidth - 48;
-        int x = left + 24;
-        int y = top + 78;
+        int dashboardX = left + 24;
+        int dashboardY = panelTop + 52;
 
+        int tabWidth = 104;
+        int tabY = top + 39;
+        int tabX = left + contentWidth / 2 - tabWidth - 4;
+        addCustomButton(Component.translatable("packcontrol.tab.dashboard"), tabX, tabY, tabWidth, 18,
+                () -> open(View.DASHBOARD, 0), view == View.DASHBOARD);
+        addCustomButton(Component.translatable("packcontrol.tab.pack_files"), tabX + tabWidth + 8, tabY, tabWidth, 18,
+                () -> open(View.PACK_FILES, 0), view == View.PACK_FILES);
+
+        if (view == View.DASHBOARD) {
+            initDashboardButtons(dashboardX, dashboardY, buttonWidth);
+            addCustomButton(Component.translatable("packcontrol.action.back"), dashboardX, top + contentHeight() - 33, buttonWidth, 20,
+                    () -> minecraft.setScreen(parent));
+        } else {
+            initPackFileButtons(left, panelTop, contentWidth);
+            addCustomButton(Component.translatable("packcontrol.action.back"), left + contentWidth - 122, top + contentHeight() - 33, 96, 20,
+                    () -> minecraft.setScreen(parent));
+        }
+    }
+
+    private void initDashboardButtons(int x, int y, int buttonWidth) {
         addActionButton("packcontrol.action.update", x, y, buttonWidth);
         addActionButton("packcontrol.action.reinstall", x, y + 25, buttonWidth);
         addActionButton("packcontrol.action.verify", x, y + 50, buttonWidth);
-        addActionButton("packcontrol.action.repository", x, y + 83, buttonWidth);
-        addActionButton("packcontrol.action.releases", x, y + 108, buttonWidth);
-        addActionButton("packcontrol.action.changelog", x, y + 133, buttonWidth);
+        addCustomButton(Component.translatable("packcontrol.action.generate_packwiz"), x, y + 83, buttonWidth, 20, this::generatePackwiz);
+        addActionButton("packcontrol.action.repository", x, y + 116, buttonWidth);
+        addActionButton("packcontrol.action.releases", x, y + 141, buttonWidth);
+        addActionButton("packcontrol.action.changelog", x, y + 166, buttonWidth);
+    }
 
-        addCustomButton(Component.translatable("packcontrol.action.back"), x, top + contentHeight() - 33, buttonWidth, 20,
-                () -> minecraft.setScreen(parent));
+    private void initPackFileButtons(int panelX, int panelTop, int panelWidth) {
+        int innerX = panelX + 28;
+        int innerWidth = panelWidth - 56;
+        int rowY = treeStartY(panelTop);
+        for (PackFileTreeService.TreeRow row : treeView.rows()) {
+            int indent = Math.min(168, row.depth() * 14);
+            if (row.directory()) {
+                addCustomButton(Component.literal(row.expanded() ? "-" : "+"), innerX + indent, rowY - 2, 16, 15,
+                        () -> toggleExpanded(row.relativePath()));
+            }
+            addCustomButton(Component.literal(row.partial() ? ">" : row.selected() ? "-" : "+"), innerX + indent + 20, rowY - 2, 22, 15,
+                    () -> toggleTreeSelection(row), row.selected());
+            rowY += TREE_ROW_HEIGHT;
+        }
+
+
+        int actionY = panelTop + panelHeight() - 94;
+        int fieldWidth = Math.min(360, innerWidth / 3);
+        customPatternBox = new EditBox(font, innerX, actionY, fieldWidth, 18, Component.translatable("packcontrol.files.custom_pattern"));
+        customPatternBox.setMaxLength(96);
+        widgets.add(addRenderableWidget(customPatternBox));
+        addCustomButton(Component.translatable("packcontrol.files.add_pattern"), innerX + fieldWidth + 8, actionY, 112, 18, this::addCustomPattern);
+
+        int actionX = innerX + fieldWidth + 132;
+        int actionAreaWidth = innerX + innerWidth - actionX;
+        int actionWidth = Math.max(84, (actionAreaWidth - 18) / 4);
+        addCustomButton(Component.translatable("packcontrol.files.save_preset"), actionX, actionY, actionWidth, 18, this::savePreset);
+        addCustomButton(Component.translatable("packcontrol.files.load_preset"), actionX + actionWidth + 6, actionY, actionWidth, 18, this::loadPreset);
+        addCustomButton(Component.translatable("packcontrol.action.generate_packwiz"), actionX + (actionWidth + 6) * 2, actionY, actionWidth, 18, this::generatePackwiz);
+        addCustomButton(Component.translatable("packcontrol.action.push_github"), actionX + (actionWidth + 6) * 3, actionY, actionWidth, 18,
+                () -> notice = Component.translatable("packcontrol.notice.coming_soon", Component.translatable("packcontrol.action.push_github")).withStyle(ChatFormatting.YELLOW));
     }
 
     private void addActionButton(String key, int x, int y, int width) {
@@ -68,8 +149,58 @@ public final class PackControlScreen extends Screen {
     }
 
     private void addCustomButton(Component label, int x, int y, int width, int height, Runnable onPress) {
-        PackControlButton button = new PackControlButton(x, y, width, height, label, onPress);
+        addCustomButton(label, x, y, width, height, onPress, false);
+    }
+
+    private void addCustomButton(Component label, int x, int y, int width, int height, Runnable onPress, boolean selected) {
+        PackControlButton button = new PackControlButton(x, y, width, height, label, onPress, selected);
         widgets.add(addRenderableWidget(button));
+    }
+
+    private void togglePreset(String pattern) {
+        PackFileSelectionService.setPresetEnabled(pattern, !PackFileSelectionService.isSelectedPreset(pattern));
+        open(View.PACK_FILES, filePage);
+    }
+
+    private void toggleExpanded(String relativePath) {
+        PackFileTreeService.toggleExpanded(relativePath);
+        open(View.PACK_FILES, filePage);
+    }
+
+    private void toggleTreeSelection(PackFileTreeService.TreeRow row) {
+        PackFileTreeService.setSelected(row.relativePath(), row.directory(), !row.selected());
+        open(View.PACK_FILES, filePage);
+    }
+
+    private void addCustomPattern() {
+        if (customPatternBox == null || customPatternBox.getValue().isBlank()) {
+            notice = Component.translatable("packcontrol.files.empty_pattern").withStyle(ChatFormatting.YELLOW);
+            return;
+        }
+        PackFileSelectionService.addIncludePattern(customPatternBox.getValue());
+        open(View.PACK_FILES, filePage);
+    }
+
+    private void savePreset() {
+        PackControlPresetService.PresetSaveResult result = PackControlPresetService.saveCurrent();
+        notice = Component.literal(result.message()).withStyle(result.success() ? ChatFormatting.GREEN : ChatFormatting.RED);
+    }
+
+    private void loadPreset() {
+        PackControlPresetService.PresetSaveResult result = PackControlPresetService.loadFirst();
+        Component nextNotice = Component.literal(result.message()).withStyle(result.success() ? ChatFormatting.GREEN : ChatFormatting.RED);
+        minecraft.setScreen(new PackControlScreen(parent, View.PACK_FILES, filePage, nextNotice));
+    }
+
+    private void generatePackwiz() {
+        PackwizGenerator.PackwizGenerationResult result = PackwizGenerator.generate();
+        notice = Component.literal(result.message()).withStyle(result.success() ? ChatFormatting.GREEN : ChatFormatting.RED);
+        scanResult = PackFileSelectionService.scan();
+        treeView = PackFileTreeService.view(filePage, TREE_ROWS_PER_PAGE);
+    }
+
+    private void open(View nextView, int nextPage) {
+        minecraft.setScreen(new PackControlScreen(parent, nextView, nextPage, notice));
     }
 
     @Override
@@ -86,35 +217,92 @@ public final class PackControlScreen extends Screen {
         int gap = 16;
         int rightLeft = left + leftWidth + gap;
         int rightWidth = contentWidth - leftWidth - gap;
-        int panelTop = top + 38;
-        int panelHeight = contentHeight - 48;
+        int panelTop = panelTop(top);
+        int panelHeight = panelHeight();
 
         drawTitle(graphics, left, top, contentWidth);
-        drawPanel(graphics, left, panelTop, leftWidth, panelHeight, "packcontrol.panel.actions");
-        drawPanel(graphics, rightLeft, panelTop, rightWidth, panelHeight, "packcontrol.panel.status");
+        drawTopTabsBar(graphics, left, top + 36, contentWidth);
 
-        drawActionHints(graphics, left, top + 262, leftWidth);
-        drawStatusPanel(graphics, rightLeft + 20, top + 78, rightWidth - 40);
-        drawFuturePanels(graphics, rightLeft + 20, top + 174, rightWidth - 40);
-        drawActivity(graphics, rightLeft + 20, top + 290, rightWidth - 40);
+        if (view == View.DASHBOARD) {
+            drawPanel(graphics, left, panelTop, leftWidth, panelHeight, "packcontrol.panel.actions");
+            drawPanel(graphics, rightLeft, panelTop, rightWidth, panelHeight, "packcontrol.panel.status");
+            drawDashboard(graphics, left, panelTop, leftWidth, rightLeft, rightWidth);
+        } else {
+            drawPanel(graphics, left, panelTop, contentWidth, panelHeight, "packcontrol.panel.pack_files");
+            drawPackFiles(graphics, left + 28, panelTop + 54, contentWidth - 56, panelTop);
+        }
+
+        if (!notice.getString().equals(Component.translatable("packcontrol.notice.ready").getString())) {
+            int noticeY = view == View.PACK_FILES ? panelTop + 41 : top + contentHeight - 18;
+            graphics.drawCenteredString(font, fit(notice.getString(), contentWidth - 60), left + contentWidth / 2, noticeY, WARNING);
+        }
 
         for (Renderable renderable : widgets) {
             renderable.render(graphics, mouseX, mouseY, partialTick);
         }
     }
 
-    @Override
-    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        graphics.fill(0, 0, width, height, BACKGROUND);
+    private void drawDashboard(GuiGraphics graphics, int left, int panelTop, int leftWidth, int rightLeft, int rightWidth) {
+        drawActionHints(graphics, left, panelTop + 254, leftWidth);
+        drawStatusPanel(graphics, rightLeft + 20, panelTop + 54, rightWidth - 40);
+        drawFuturePanels(graphics, rightLeft + 20, panelTop + 150, rightWidth - 40);
+        drawActivity(graphics, rightLeft + 20, panelTop + 266, rightWidth - 40);
     }
 
-    @Override
-    public void renderTransparentBackground(GuiGraphics graphics) {
-        graphics.fill(0, 0, width, height, BACKGROUND);
+    private void drawPackFiles(GuiGraphics graphics, int x, int y, int width, int panelTop) {
+        PackControlConfig.PackControlPackConfig pack = PackControlConfig.pack();
+        int color = pack.lastGenerationStatus.startsWith("Generation failed") ? ERROR : GOOD;
+        int leftColumn = Math.max(360, width / 2);
+
+        graphics.drawString(font, Component.literal("Pack root: " + fit(String.valueOf(PackControlConfig.gameDirectory()), leftColumn - 12)), x, y, MUTED, false);
+        graphics.drawString(font, Component.literal("Selected: " + scanResult.includedCount() + " files"), x, y + 14, TEXT, false);
+        graphics.drawString(font, Component.literal("Skipped: " + scanResult.skippedCount()), x + 150, y + 14, MUTED, false);
+        graphics.drawString(font, Component.literal("Version rules: " + fit(pack.selectionVersion, 160)), x + leftColumn, y, MUTED, false);
+        graphics.drawString(font, Component.literal("Last generation: " + fit(pack.lastGenerationStatus, width - leftColumn - 20)), x + leftColumn, y + 14, color, false);
+
+        int listTop = y + 42;
+        graphics.drawString(font, Component.translatable("packcontrol.files.tree_title"), x, listTop, TEXT, false);
+        graphics.drawString(font, Component.literal("Rows: " + treeView.totalRows()), x + 128, listTop, MUTED, false);
+        graphics.drawString(font, Component.literal("Preset: " + fit(pack.lastSavedPreset, 180)), x + width - 200, listTop, MUTED, false);
+
+        int rowY = treeStartY(panelTop);
+        for (PackFileTreeService.TreeRow row : treeView.rows()) {
+            drawTreeRow(graphics, x, rowY, width, row);
+            rowY += TREE_ROW_HEIGHT;
+        }
+
+        int treeFooterY = treeStartY(panelTop) + TREE_ROWS_PER_PAGE * TREE_ROW_HEIGHT + 10;
+        String missing = treeView.missingFolders().isEmpty()
+                ? "Optional folders: all default folders are present"
+                : "Optional folders not found: " + String.join(", ", treeView.missingFolders());
+        graphics.drawString(font, fit(missing, width - 20), x, treeFooterY, treeView.missingFolders().isEmpty() ? GOOD : WARNING, false);
+
+        int patternInfoY = panelTop + panelHeight() - 120;
+        graphics.drawString(font, Component.translatable("packcontrol.files.patterns_title"), x, patternInfoY, TEXT, false);
+        graphics.drawString(font, Component.literal("Include " + pack.includePatterns.size()), x + 132, patternInfoY, MUTED, false);
+        graphics.drawString(font, Component.literal("Exclude " + pack.excludePatterns.size()), x + 220, patternInfoY, MUTED, false);
+        graphics.drawString(font, Component.literal("Saved " + fit(pack.lastSavedPreset, 140)), x + 310, patternInfoY, MUTED, false);
+        graphics.drawString(font, Component.literal("Patterns: config/packcontrol-presets"), x + width - 260, patternInfoY, MUTED, false);
     }
 
-    @Override
-    protected void renderBlurredBackground(float partialTick) {
+    private void drawTreeRow(GuiGraphics graphics, int x, int y, int width, PackFileTreeService.TreeRow row) {
+        int indent = Math.min(168, row.depth() * 14);
+        int textX = x + indent + 50;
+        int accent = row.partial() ? WARNING : row.selected() ? GOOD : ERROR;
+        int fill = row.partial() ? 0xBB2A2617 : row.selected() ? 0xCC141D2E : 0xAA26151A;
+        graphics.fill(x, y - 3, x + width, y + 14, fill);
+        graphics.fill(x, y - 3, x + 2, y + 14, accent);
+
+        String state = row.partial() ? "partial " : row.selected() ? "selected " : "excluded ";
+        String type = row.directory() ? (row.expanded() ? "open " : "closed ") : "file ";
+        String suffix = row.directory() ? "/  " + row.childCount() + " items" : "  " + readableSize(row.size());
+        int nameColor = row.partial() ? WARNING : row.selected() ? TEXT : 0xFFFFA0A0;
+        graphics.drawString(font, fit(state + type + row.name() + suffix, width - indent - 64), textX, y, nameColor, false);
+    }
+
+    private void drawTopTabsBar(GuiGraphics graphics, int x, int y, int width) {
+        graphics.fill(x, y, x + width, y + 24, 0x66121827);
+        graphics.fill(x, y + 23, x + width, y + 24, BORDER);
     }
 
     private void drawTitle(GuiGraphics graphics, int left, int top, int contentWidth) {
@@ -233,6 +421,24 @@ public final class PackControlScreen extends Screen {
         return builder + suffix;
     }
 
+    private int totalFilePages() {
+        return treeView == null ? 1 : Math.max(1, treeView.totalPages());
+    }
+
+    private String compactPattern(String pattern) {
+        return pattern.endsWith("/**") ? pattern.substring(0, pattern.length() - 3) + "/" : pattern;
+    }
+
+    private String readableSize(long size) {
+        if (size < 1024) {
+            return size + " B";
+        }
+        if (size < 1024 * 1024) {
+            return (size / 1024) + " KB";
+        }
+        return (size / (1024 * 1024)) + " MB";
+    }
+
     private int contentWidth() {
         return Math.min(width - 28, 1192);
     }
@@ -253,6 +459,46 @@ public final class PackControlScreen extends Screen {
         return Math.max(250, Math.min(300, contentWidth() / 3));
     }
 
+    private int panelTop(int top) {
+        return top + 66;
+    }
+
+    private int panelHeight() {
+        return contentHeight() - 76;
+    }
+
+    private int treeStartY(int panelTop) {
+        return panelTop + 132;
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (view == View.PACK_FILES) {
+            int scrollRows = Math.max(1, Math.min(2, (int) Math.ceil(Math.abs(scrollY) * 1.5D)));
+            int nextPage = scrollY < 0 ? filePage + scrollRows : filePage - scrollRows;
+            nextPage = Math.max(0, Math.min(totalFilePages() - 1, nextPage));
+            if (nextPage != filePage) {
+                open(View.PACK_FILES, nextPage);
+            }
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+    }
+
+    @Override
+    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        graphics.fill(0, 0, width, height, BACKGROUND);
+    }
+
+    @Override
+    public void renderTransparentBackground(GuiGraphics graphics) {
+        graphics.fill(0, 0, width, height, BACKGROUND);
+    }
+
+    @Override
+    protected void renderBlurredBackground(float partialTick) {
+    }
+
     @Override
     public boolean shouldCloseOnEsc() {
         return true;
@@ -263,12 +509,19 @@ public final class PackControlScreen extends Screen {
         minecraft.setScreen(parent);
     }
 
+    private enum View {
+        DASHBOARD,
+        PACK_FILES
+    }
+
     private static final class PackControlButton extends AbstractWidget {
         private final Runnable onPress;
+        private final boolean selected;
 
-        private PackControlButton(int x, int y, int width, int height, Component message, Runnable onPress) {
+        private PackControlButton(int x, int y, int width, int height, Component message, Runnable onPress, boolean selected) {
             super(x, y, width, height, message);
             this.onPress = onPress;
+            this.selected = selected;
         }
 
         @Override
@@ -285,15 +538,18 @@ public final class PackControlScreen extends Screen {
             int y = getY();
             int w = getWidth();
             int h = getHeight();
-            int fill = hovered ? BUTTON_HOVER : BUTTON;
+            int fill = selected ? 0xFF29365A : hovered ? BUTTON_HOVER : BUTTON;
+            int accent = selected ? GOOD : hovered ? GOOD : BUTTON_ACCENT;
             int textColor = active ? TEXT : 0xFF697086;
 
             graphics.fill(x, y, x + w, y + h, fill);
-            graphics.fill(x, y, x + w, y + 1, hovered ? BUTTON_ACCENT : BUTTON_BORDER);
+            graphics.fill(x, y, x + w, y + 1, selected || hovered ? accent : BUTTON_BORDER);
             graphics.fill(x, y + h - 1, x + w, y + h, 0xFF101725);
-            graphics.fill(x, y, x + 1, y + h, hovered ? BUTTON_ACCENT : BUTTON_BORDER);
+            graphics.fill(x, y, x + 1, y + h, selected || hovered ? accent : BUTTON_BORDER);
             graphics.fill(x + w - 1, y, x + w, y + h, 0xFF101725);
-            graphics.fill(x + 3, y + 4, x + 5, y + h - 4, hovered ? GOOD : BUTTON_ACCENT);
+            if (w > 28) {
+                graphics.fill(x + 3, y + 4, x + 5, y + h - 4, accent);
+            }
             graphics.drawCenteredString(Minecraft.getInstance().font, getMessage(), x + w / 2, y + (h - 8) / 2, textColor);
         }
 

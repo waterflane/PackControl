@@ -9,6 +9,6 @@ public final class PackControlFabric implements ModInitializer {
     @Override
     public void onInitialize() {
         PackControl.init();
-        PackControlConfig.load(FabricLoader.getInstance().getConfigDir());
+        PackControlConfig.load(FabricLoader.getInstance().getConfigDir(), FabricLoader.getInstance().getGameDir());
     }
 }
