@@ -16,6 +16,9 @@ import org.wodichka.packcontrol.packwiz.PackControlPresetService;
 import org.wodichka.packcontrol.packwiz.PackFileSelectionService;
 import org.wodichka.packcontrol.packwiz.PackFileTreeService;
 import org.wodichka.packcontrol.packwiz.PackwizGenerator;
+import org.wodichka.packcontrol.snapshot.PackSnapshotService;
+import org.wodichka.packcontrol.snapshot.SnapshotDownloadService;
+import org.wodichka.packcontrol.snapshot.SnapshotInstallPlan;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -47,6 +50,8 @@ public final class PackControlScreen extends Screen {
     private PackFileSelectionService.PackFileScanResult scanResult;
     private PackFileTreeService.PackFileTreeView treeView;
     private EditBox customPatternBox;
+    private PackSnapshotService.LoadedSnapshot latestSnapshot;
+    private SnapshotInstallPlan pendingInstallPlan;
     private Component notice;
 
     public PackControlScreen(Screen parent) {
@@ -71,6 +76,7 @@ public final class PackControlScreen extends Screen {
         widgets.clear();
         scanResult = PackFileSelectionService.scan();
         treeView = PackFileTreeService.view(filePage, TREE_ROWS_PER_PAGE);
+        latestSnapshot = PackSnapshotService.latestSnapshot();
 
         int left = contentLeft();
         int top = contentTop();
@@ -101,15 +107,14 @@ public final class PackControlScreen extends Screen {
     }
 
     private void initDashboardButtons(int x, int y, int buttonWidth) {
-        addActionButton("packcontrol.action.update", x, y, buttonWidth);
-        addActionButton("packcontrol.action.reinstall", x, y + 25, buttonWidth);
-        addActionButton("packcontrol.action.verify", x, y + 50, buttonWidth);
-        addCustomButton(Component.translatable("packcontrol.action.generate_packwiz"), x, y + 83, buttonWidth, 20, this::generatePackwiz);
-        addActionButton("packcontrol.action.repository", x, y + 116, buttonWidth);
-        addActionButton("packcontrol.action.releases", x, y + 141, buttonWidth);
-        addActionButton("packcontrol.action.changelog", x, y + 166, buttonWidth);
+        addCustomButton(Component.translatable("packcontrol.snapshot.save"), x, y, buttonWidth, 20, this::saveSnapshot);
+        addCustomButton(Component.translatable("packcontrol.snapshot.load"), x, y + 25, buttonWidth, 20, this::loadSnapshot);
+        addCustomButton(Component.translatable("packcontrol.snapshot.download"), x, y + 50, buttonWidth, 20, this::downloadPack);
+        addCustomButton(Component.translatable("packcontrol.snapshot.edit_urls"), x, y + 75, buttonWidth, 20, this::editModUrls);
+        addCustomButton(Component.translatable("packcontrol.action.generate_packwiz"), x, y + 108, buttonWidth, 20, this::generatePackwiz);
+        addActionButton("packcontrol.action.repository", x, y + 141, buttonWidth);
+        addActionButton("packcontrol.action.releases", x, y + 166, buttonWidth);
     }
-
     private void initPackFileButtons(int panelX, int panelTop, int panelWidth) {
         int innerX = panelX + 28;
         int innerWidth = panelWidth - 56;
@@ -126,20 +131,20 @@ public final class PackControlScreen extends Screen {
         }
 
 
-        int actionY = panelTop + panelHeight() - 94;
-        int fieldWidth = Math.min(360, innerWidth / 3);
-        customPatternBox = new EditBox(font, innerX, actionY, fieldWidth, 18, Component.translatable("packcontrol.files.custom_pattern"));
-        customPatternBox.setMaxLength(96);
+        int actionY = panelTop + panelHeight() - 116;
+        int fieldWidth = Math.min(420, innerWidth / 2);
+        customPatternBox = new EditBox(font, innerX, actionY, fieldWidth, 18, Component.translatable("packcontrol.snapshot.mod_url_mapping"));
+        customPatternBox.setMaxLength(260);
         widgets.add(addRenderableWidget(customPatternBox));
-        addCustomButton(Component.translatable("packcontrol.files.add_pattern"), innerX + fieldWidth + 8, actionY, 112, 18, this::addCustomPattern);
+        addCustomButton(Component.translatable("packcontrol.snapshot.edit_urls"), innerX + fieldWidth + 8, actionY, 128, 18, this::editModUrls);
 
-        int actionX = innerX + fieldWidth + 132;
-        int actionAreaWidth = innerX + innerWidth - actionX;
-        int actionWidth = Math.max(84, (actionAreaWidth - 18) / 4);
-        addCustomButton(Component.translatable("packcontrol.files.save_preset"), actionX, actionY, actionWidth, 18, this::savePreset);
-        addCustomButton(Component.translatable("packcontrol.files.load_preset"), actionX + actionWidth + 6, actionY, actionWidth, 18, this::loadPreset);
-        addCustomButton(Component.translatable("packcontrol.action.generate_packwiz"), actionX + (actionWidth + 6) * 2, actionY, actionWidth, 18, this::generatePackwiz);
-        addCustomButton(Component.translatable("packcontrol.action.push_github"), actionX + (actionWidth + 6) * 3, actionY, actionWidth, 18,
+        int actionRowY = actionY + 26;
+        int actionWidth = Math.max(116, (innerWidth - 24) / 5);
+        addCustomButton(Component.translatable("packcontrol.snapshot.save"), innerX, actionRowY, actionWidth, 18, this::saveSnapshot);
+        addCustomButton(Component.translatable("packcontrol.snapshot.load"), innerX + actionWidth + 6, actionRowY, actionWidth, 18, this::loadSnapshot);
+        addCustomButton(Component.translatable("packcontrol.snapshot.download"), innerX + (actionWidth + 6) * 2, actionRowY, actionWidth, 18, this::downloadPack);
+        addCustomButton(Component.translatable("packcontrol.action.generate_packwiz"), innerX + (actionWidth + 6) * 3, actionRowY, actionWidth, 18, this::generatePackwiz);
+        addCustomButton(Component.translatable("packcontrol.action.push_github"), innerX + (actionWidth + 6) * 4, actionRowY, actionWidth, 18,
                 () -> notice = Component.translatable("packcontrol.notice.coming_soon", Component.translatable("packcontrol.action.push_github")).withStyle(ChatFormatting.YELLOW));
     }
 
@@ -173,14 +178,47 @@ public final class PackControlScreen extends Screen {
     }
 
     private void addCustomPattern() {
-        if (customPatternBox == null || customPatternBox.getValue().isBlank()) {
-            notice = Component.translatable("packcontrol.files.empty_pattern").withStyle(ChatFormatting.YELLOW);
-            return;
-        }
-        PackFileSelectionService.addIncludePattern(customPatternBox.getValue());
-        open(View.PACK_FILES, filePage);
+        editModUrls();
     }
 
+    private void editModUrls() {
+        if (customPatternBox == null || customPatternBox.getValue().isBlank()) {
+            notice = Component.translatable("packcontrol.snapshot.empty_url_mapping").withStyle(ChatFormatting.YELLOW);
+            return;
+        }
+        PackControlConfig.addManualModUrl(customPatternBox.getValue());
+        notice = Component.translatable("packcontrol.snapshot.url_saved").withStyle(ChatFormatting.GREEN);
+    }
+
+    private void saveSnapshot() {
+        PackSnapshotService.SnapshotSaveResult result = PackSnapshotService.saveSnapshot();
+        notice = Component.literal(result.message()).withStyle(result.success() ? ChatFormatting.GREEN : ChatFormatting.RED);
+        latestSnapshot = PackSnapshotService.latestSnapshot();
+        pendingInstallPlan = null;
+        scanResult = PackFileSelectionService.scan();
+        treeView = PackFileTreeService.view(filePage, TREE_ROWS_PER_PAGE);
+    }
+
+    private void loadSnapshot() {
+        PackSnapshotService.LoadedSnapshot result = PackSnapshotService.latestSnapshot();
+        latestSnapshot = result;
+        notice = Component.literal(result.message()).withStyle(result.success() ? ChatFormatting.GREEN : ChatFormatting.RED);
+        pendingInstallPlan = null;
+    }
+
+    private void downloadPack() {
+        if (pendingInstallPlan == null || !pendingInstallPlan.success()) {
+            pendingInstallPlan = SnapshotDownloadService.previewLatest();
+            notice = Component.literal(pendingInstallPlan.message() + (pendingInstallPlan.success() ? " Click Download Pack again to install." : "")).withStyle(pendingInstallPlan.success() ? ChatFormatting.YELLOW : ChatFormatting.RED);
+            return;
+        }
+        SnapshotDownloadService.SnapshotInstallResult result = SnapshotDownloadService.installLatest();
+        notice = Component.literal(result.message()).withStyle(result.success() ? ChatFormatting.GREEN : ChatFormatting.RED);
+        pendingInstallPlan = null;
+        latestSnapshot = PackSnapshotService.latestSnapshot();
+        scanResult = PackFileSelectionService.scan();
+        treeView = PackFileTreeService.view(filePage, TREE_ROWS_PER_PAGE);
+    }
     private void savePreset() {
         PackControlPresetService.PresetSaveResult result = PackControlPresetService.saveCurrent();
         notice = Component.literal(result.message()).withStyle(result.success() ? ChatFormatting.GREEN : ChatFormatting.RED);
@@ -197,6 +235,7 @@ public final class PackControlScreen extends Screen {
         notice = Component.literal(result.message()).withStyle(result.success() ? ChatFormatting.GREEN : ChatFormatting.RED);
         scanResult = PackFileSelectionService.scan();
         treeView = PackFileTreeService.view(filePage, TREE_ROWS_PER_PAGE);
+        latestSnapshot = PackSnapshotService.latestSnapshot();
     }
 
     private void open(View nextView, int nextPage) {
@@ -258,9 +297,10 @@ public final class PackControlScreen extends Screen {
         graphics.drawString(font, Component.literal("Selected: " + scanResult.includedCount() + " files"), x, y + 14, TEXT, false);
         graphics.drawString(font, Component.literal("Skipped: " + scanResult.skippedCount()), x + 150, y + 14, MUTED, false);
         graphics.drawString(font, Component.literal("Version rules: " + fit(pack.selectionVersion, 160)), x + leftColumn, y, MUTED, false);
-        graphics.drawString(font, Component.literal("Last generation: " + fit(pack.lastGenerationStatus, width - leftColumn - 20)), x + leftColumn, y + 14, color, false);
+        graphics.drawString(font, Component.literal("Snapshot: " + fit(pack.activeSnapshotName, width - leftColumn - 20)), x + leftColumn, y + 14, pack.unresolvedSnapshotMods == 0 ? GOOD : WARNING, false);
+        graphics.drawString(font, Component.literal("Download: " + fit(pack.lastDownloadStatus, width - leftColumn - 20)), x + leftColumn, y + 28, MUTED, false);
 
-        int listTop = y + 42;
+        int listTop = y + 48;
         graphics.drawString(font, Component.translatable("packcontrol.files.tree_title"), x, listTop, TEXT, false);
         graphics.drawString(font, Component.literal("Rows: " + treeView.totalRows()), x + 128, listTop, MUTED, false);
         graphics.drawString(font, Component.literal("Preset: " + fit(pack.lastSavedPreset, 180)), x + width - 200, listTop, MUTED, false);
@@ -293,11 +333,9 @@ public final class PackControlScreen extends Screen {
         graphics.fill(x, y - 3, x + width, y + 14, fill);
         graphics.fill(x, y - 3, x + 2, y + 14, accent);
 
-        String state = row.partial() ? "partial " : row.selected() ? "selected " : "excluded ";
-        String type = row.directory() ? (row.expanded() ? "open " : "closed ") : "file ";
         String suffix = row.directory() ? "/  " + row.childCount() + " items" : "  " + readableSize(row.size());
         int nameColor = row.partial() ? WARNING : row.selected() ? TEXT : 0xFFFFA0A0;
-        graphics.drawString(font, fit(state + type + row.name() + suffix, width - indent - 64), textX, y, nameColor, false);
+        graphics.drawString(font, fit(row.name() + suffix, width - indent - 64), textX, y, nameColor, false);
     }
 
     private void drawTopTabsBar(GuiGraphics graphics, int x, int y, int width) {
@@ -339,6 +377,10 @@ public final class PackControlScreen extends Screen {
         drawRow(graphics, x, y + 45, width, "packcontrol.status.branch", state.branch(), TEXT);
         drawRow(graphics, x, y + 60, width, "packcontrol.status.sync", state.syncStatus(), WARNING);
         drawRow(graphics, x, y + 75, width, "packcontrol.status.last_check", state.lastCheck(), MUTED);
+        drawRowLiteral(graphics, x, y + 100, width, "Snapshot", PackControlConfig.pack().activeSnapshotName, PackControlConfig.pack().unresolvedSnapshotMods == 0 ? GOOD : WARNING);
+        drawRowLiteral(graphics, x, y + 115, width, "Unresolved mods", String.valueOf(PackControlConfig.pack().unresolvedSnapshotMods), PackControlConfig.pack().unresolvedSnapshotMods == 0 ? GOOD : WARNING);
+        drawRowLiteral(graphics, x, y + 130, width, "Download", PackControlConfig.pack().lastDownloadStatus, MUTED);
+        drawRowLiteral(graphics, x, y + 145, width, "Backup", PackControlConfig.pack().lastBackupPath.isBlank() ? "none" : PackControlConfig.pack().lastBackupPath, MUTED);
     }
 
     private void drawFuturePanels(GuiGraphics graphics, int x, int y, int width) {
@@ -391,6 +433,11 @@ public final class PackControlScreen extends Screen {
         graphics.drawString(font, fit(value, width - font.width(label) - 8), x + font.width(label) + 8, y, valueColor, false);
     }
 
+    private void drawRowLiteral(GuiGraphics graphics, int x, int y, int width, String labelText, String value, int valueColor) {
+        String label = labelText + ":";
+        graphics.drawString(font, label, x, y, MUTED, false);
+        graphics.drawString(font, fit(value == null ? "" : value, width - font.width(label) - 8), x + font.width(label) + 8, y, valueColor, false);
+    }
     private void drawWrapped(GuiGraphics graphics, String text, int x, int y, int width, int color, int maxLines) {
         String remaining = text;
         for (int line = 0; line < maxLines && !remaining.isEmpty(); line++) {

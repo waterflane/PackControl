@@ -288,6 +288,13 @@ public final class PackControlConfig {
         public int lastGeneratedFileCount = 0;
         public int lastSkippedFileCount = 0;
         public String lastGenerationStatus = "Never generated";
+        public String activeSnapshotName = "none";
+        public String activeSnapshotPath = "";
+        public String lastSnapshotStatus = "No snapshot saved";
+        public String lastDownloadStatus = "Never downloaded";
+        public String lastBackupPath = "";
+        public int unresolvedSnapshotMods = 0;
+        public List<String> manualModUrls = new ArrayList<>();
 
         public static PackControlPackConfig defaults(PackControlUserConfig user) {
             PackControlPackConfig config = new PackControlPackConfig();
@@ -323,6 +330,13 @@ public final class PackControlConfig {
             lastSavedPreset = clean(lastSavedPreset, "none");
             lastGeneratedAt = clean(lastGeneratedAt, "never");
             lastGenerationStatus = clean(lastGenerationStatus, "Never generated");
+            activeSnapshotName = clean(activeSnapshotName, "none");
+            activeSnapshotPath = activeSnapshotPath == null ? "" : activeSnapshotPath.trim();
+            lastSnapshotStatus = clean(lastSnapshotStatus, "No snapshot saved");
+            lastDownloadStatus = clean(lastDownloadStatus, "Never downloaded");
+            lastBackupPath = lastBackupPath == null ? "" : lastBackupPath.trim();
+            unresolvedSnapshotMods = Math.max(0, unresolvedSnapshotMods);
+            manualModUrls = uniqueManualUrls(manualModUrls);
             return this;
         }
 
@@ -333,6 +347,36 @@ public final class PackControlConfig {
         public String branchDisplay() {
             return clean(targetGithubBranch, "main");
         }
+    }
+
+    private static List<String> uniqueManualUrls(List<String> values) {
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        if (values != null) {
+            for (String value : values) {
+                String cleaned = value == null ? "" : value.trim();
+                int equals = cleaned.indexOf('=');
+                if (equals > 0 && (cleaned.substring(equals + 1).startsWith("https://") || cleaned.substring(equals + 1).startsWith("http://"))) {
+                    result.add(cleaned);
+                }
+            }
+        }
+        return new ArrayList<>(result);
+    }
+
+    public static void addManualModUrl(String mapping) {
+        String cleaned = mapping == null ? "" : mapping.trim();
+        int equals = cleaned.indexOf('=');
+        if (equals <= 0) {
+            return;
+        }
+        String filename = cleaned.substring(0, equals).trim();
+        String url = cleaned.substring(equals + 1).trim();
+        if (filename.isBlank() || !(url.startsWith("https://") || url.startsWith("http://"))) {
+            return;
+        }
+        PACK.manualModUrls.removeIf(existing -> existing.toLowerCase().startsWith(filename.toLowerCase() + "="));
+        PACK.manualModUrls.add(filename + "=" + url);
+        savePack();
     }
 
     private static List<String> unique(List<String> values, List<String> fallback) {

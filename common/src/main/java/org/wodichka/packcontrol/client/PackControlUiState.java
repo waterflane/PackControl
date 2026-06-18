@@ -38,16 +38,16 @@ public record PackControlUiState(
                 "Planned",
                 "Planned",
                 "Not connected",
-                pack.packwizManifestPath,
-                "Index: " + pack.packwizIndexPath,
+                pack.activeSnapshotPath.isBlank() ? "No snapshot loaded" : pack.activeSnapshotPath,
+                "Unresolved mods: " + pack.unresolvedSnapshotMods,
                 pack.lastGeneratedFileCount == 0 ? "Unknown" : String.valueOf(pack.lastGeneratedFileCount),
                 user.includeOptionalFiles ? "Included" : "Excluded by default",
-                pack.lastGenerationStatus,
+                pack.lastSnapshotStatus,
                 List.of(
-                        "User config: config/packcontrol-user.json.",
-                        "Pack config: packcontrol-pack.json in the current game directory.",
-                        "Last Packwiz generation: " + pack.lastGeneratedAt + ".",
-                        "GitHub push remains reserved for the next implementation stage."
+                        "Snapshot: " + pack.activeSnapshotName + ".",
+                        "Snapshot path: " + (pack.activeSnapshotPath.isBlank() ? "none" : pack.activeSnapshotPath) + ".",
+                        "Download: " + pack.lastDownloadStatus + ".",
+                        "Backup: " + (pack.lastBackupPath.isBlank() ? "none" : pack.lastBackupPath) + "."
                 )
         );
     }

@@ -1,12 +1,11 @@
 {
-  "system": "PackControl Packwiz Generator",
+  "system": "PackControl Snapshot Downloader with Optional Packwiz Export",
+  "snapshotBased": true,
   "packwizCompatible": true,
-  "packFormat": "packwiz:1.1.0",
-  "indexHashFormat": "sha256",
-  "generator": "built-in",
   "notes": [
-    "PackControl writes pack.toml and index.toml directly without requiring packwiz.exe.",
-    "GitHub upload/push is intentionally reserved for a later implementation stage.",
-    "Per-pack file selection is stored in packcontrol-pack.json."
+    "PackControl stores portable snapshot.json manifests for modpack restore.",
+    "Mods are represented by source, downloadUrl, and sha256 metadata instead of storing large jar files.",
+    "Config, kubejs, resourcepacks, datapacks, and similar files are stored in snapshot-files.zip.",
+    "Packwiz generation remains an optional export target."
   ]
 }
