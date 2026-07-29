@@ -1,3 +1,8 @@
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import java.util.HexFormat
+
 plugins {
     id 'dev.architectury.loom' version '1.14-SNAPSHOT' apply false
     id 'architectury-plugin' version '3.4-SNAPSHOT'
@@ -51,21 +56,78 @@ configure(subprojects.findAll { it.name != 'packcontrol-publisher' }) {
     }
 }
 
-tasks.register('releaseJars', Copy) {
-    group = 'build'
-    description = 'Copies loader-ready PackControl jars into the root release directory.'
+def releaseArtifactsDirectory = layout.buildDirectory.dir('release-artifacts')
 
-    dependsOn ':fabric:build', ':forge:build', ':neoforge:build'
+tasks.register('releaseArtifacts') {
+    group = 'distribution'
+    description = 'Builds, tests, collects and checksums all GitHub Release assets.'
 
-    into layout.projectDirectory.dir('release')
-    from(project(':fabric').layout.buildDirectory.file("libs/${archives_name}-fabric-${mod_version}.jar"))
-    from(project(':forge').layout.buildDirectory.file("libs/${archives_name}-forge-${mod_version}.jar"))
-    from(project(':neoforge').layout.buildDirectory.file("libs/${archives_name}-neoforge-${mod_version}.jar"))
+    dependsOn(
+            ':common:test',
+            ':packcontrol-publisher:test',
+            ':common:sourcesJar',
+            ':fabric:remapJar',
+            ':fabric:remapSourcesJar',
+            ':forge:shadowJar',
+            ':forge:remapSourcesJar',
+            ':neoforge:remapJar',
+            ':neoforge:remapSourcesJar',
+            ':packcontrol-publisher:distZip'
+    )
+    outputs.dir(releaseArtifactsDirectory)
+    outputs.upToDateWhen { false }
+
+    doLast {
+        File destination = releaseArtifactsDirectory.get().asFile
+        delete(destination)
+        if (!destination.mkdirs() && !destination.isDirectory()) {
+            throw new GradleException("Could not create release artifact directory: $destination")
+        }
+
+        List<File> artifacts = [
+                project(':fabric').tasks.named('remapJar').get().archiveFile.get().asFile,
+                project(':forge').tasks.named('shadowJar').get().archiveFile.get().asFile,
+                project(':neoforge').tasks.named('remapJar').get().archiveFile.get().asFile,
+                project(':common').tasks.named('sourcesJar').get().archiveFile.get().asFile,
+                project(':fabric').tasks.named('remapSourcesJar').get().archiveFile.get().asFile,
+                project(':forge').tasks.named('remapSourcesJar').get().archiveFile.get().asFile,
+                project(':neoforge').tasks.named('remapSourcesJar').get().archiveFile.get().asFile,
+                project(':packcontrol-publisher').tasks.named('distZip').get().archiveFile.get().asFile
+        ]
+
+        artifacts.each { artifact ->
+            if (!artifact.isFile()) {
+                throw new GradleException("Required release artifact is missing: $artifact")
+            }
+            Files.copy(
+                    artifact.toPath(),
+                    destination.toPath().resolve(artifact.name),
+                    StandardCopyOption.REPLACE_EXISTING
+            )
+        }
+
+        List<String> checksums = destination.listFiles()
+                .findAll { it.isFile() }
+                .sort { left, right -> left.name <=> right.name }
+                .collect { artifact ->
+                    MessageDigest digest = MessageDigest.getInstance('SHA-256')
+                    artifact.withInputStream { input ->
+                        byte[] buffer = new byte[16 * 1024]
+                        int read
+                        while ((read = input.read(buffer)) >= 0) {
+                            if (read > 0) {
+                                digest.update(buffer, 0, read)
+                            }
+                        }
+                    }
+                    "${HexFormat.of().formatHex(digest.digest())}  ${artifact.name}"
+                }
+        new File(destination, 'checksums.txt').setText(checksums.join('\n') + '\n', 'UTF-8')
+    }
 }
 
-gradle.projectsEvaluated {
-    def buildTask = tasks.findByName('build')
-    if (buildTask != null) {
-        buildTask.finalizedBy(tasks.named('releaseJars'))
-    }
+tasks.register('releaseJars') {
+    group = 'distribution'
+    description = 'Compatibility alias for releaseArtifacts.'
+    dependsOn tasks.named('releaseArtifacts')
 }

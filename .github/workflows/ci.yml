@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-tests:
+    name: Core tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          validate-wrappers: true
+          cache-provider: basic
+      - name: Test update core
+        run: ./gradlew --stacktrace :common:test
+
+  publisher-fixtures:
+    name: Publisher fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          validate-wrappers: true
+          cache-provider: basic
+      - name: Test deterministic publisher fixtures
+        run: ./gradlew --stacktrace :packcontrol-publisher:test
+
+  loader-builds:
+    name: Loader-ready JARs
+    needs:
+      - core-tests
+      - publisher-fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          validate-wrappers: true
+          cache-provider: basic
+      - name: Build loader artifacts
+        run: ./gradlew --stacktrace :fabric:assemble :forge:assemble :neoforge:assemble

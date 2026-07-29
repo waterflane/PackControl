@@ -25,6 +25,25 @@ crash-reports/
 saves/
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
+!packcontrol-publisher/src/test/resources/fixture-pack/mods/*.jar
+
+# Local PackControl state and publisher output
+/.packcontrol/
+/packcontrol-user.json
+/packcontrol-pack.json
+/publisher-output/
+
+# Local secrets and signing material
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials.json
+secrets.json
 
 MODRINTH_DESCRIPTION.md
 WIKI_DRAFT.md

@@ -1,0 +1,14 @@
+{
+  "packId": "example-pack",
+  "name": "Example Pack",
+  "version": "1.0.0",
+  "releaseId": "example-pack-1.0.0",
+  "summary": "Minimal PackControl repository example",
+  "minecraftVersion": "1.21.1",
+  "loader": "neoforge",
+  "loaderVersion": "21.1.233",
+  "minimumPackControlVersion": "0.1.0",
+  "releaseBaseUrl": "https://downloads.example.invalid/example-pack/1.0.0/",
+  "optionalMods": [],
+  "githubMods": {}
+}

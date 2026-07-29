@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "targetGithubRepository": "example/example-pack",
+  "updateChannel": "stable"
+}

@@ -3,14 +3,16 @@
   "id": "packcontrol",
   "version": "${version}",
   "name": "PackControl",
-  "description": "A client-side modpack synchronization dashboard prepared for Packwiz and GitHub integration.",
+  "description": "A safe, transactional modpack updater for Minecraft 1.21.1.",
   "authors": [
     "waterflane"
   ],
   "contact": {
-    "homepage": "https://github.com/packwiz/packwiz"
+    "homepage": "https://github.com/waterflane/PackControl",
+    "sources": "https://github.com/waterflane/PackControl",
+    "issues": "https://github.com/waterflane/PackControl/issues"
   },
-  "license": "GNU GPL 3.0",
+  "license": "GPL-3.0-only",
   "environment": "client",
   "entrypoints": {
     "main": [
