@@ -35,6 +35,7 @@
   "packcontrol.github.commits": "Commits",
   "packcontrol.github.issues": "Issues",
   "packcontrol.github.account": "Account",
+  "packcontrol.github.disabled": "GitHub Releases checks are disabled in the user configuration.",
   "packcontrol.packwiz.title": "Optional Packwiz Export",
   "packcontrol.packwiz.manifest": "Manifest",
   "packcontrol.packwiz.index": "Index",

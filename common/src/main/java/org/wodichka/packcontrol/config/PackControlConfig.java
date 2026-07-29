@@ -272,10 +272,11 @@ public final class PackControlConfig {
         public String modLoaderVersion = "21.1.233";
         public String targetGithubRepository = "waterflane/packcontrol-pack";
         public String targetGithubBranch = "main";
-        public String updateChannel = "development";
+        public String updateChannel = "stable";
         public String installedVersion = "not-installed";
         public String latestKnownVersion = "0.1.0-dev";
         public String lastUpdateCheck = "never";
+        public String lastReleaseCheckStatus = "Not checked";
         public String packwizManifestPath = "pack.toml";
         public String packwizIndexPath = "index.toml";
         public String packwizHashFormat = "sha256";
@@ -319,10 +320,11 @@ public final class PackControlConfig {
             modLoaderVersion = clean(modLoaderVersion, "21.1.233");
             targetGithubRepository = clean(targetGithubRepository, user.defaultGithubRepository);
             targetGithubBranch = clean(targetGithubBranch, user.preferredBranch);
-            updateChannel = clean(updateChannel, "development");
+            updateChannel = "beta".equalsIgnoreCase(clean(updateChannel, "stable")) ? "beta" : "stable";
             installedVersion = clean(installedVersion, "not-installed");
             latestKnownVersion = clean(latestKnownVersion, packVersion);
             lastUpdateCheck = clean(lastUpdateCheck, "never");
+            lastReleaseCheckStatus = clean(lastReleaseCheckStatus, "Not checked");
             packwizManifestPath = clean(packwizManifestPath, "pack.toml");
             packwizIndexPath = clean(packwizIndexPath, "index.toml");
             packwizHashFormat = "sha256";

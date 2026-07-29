@@ -21,9 +21,13 @@ import org.wodichka.packcontrol.snapshot.SnapshotDownloadService;
 import org.wodichka.packcontrol.snapshot.SnapshotInstallPlan;
 import org.wodichka.packcontrol.snapshot.SnapshotProgress;
 import org.wodichka.packcontrol.snapshot.SnapshotSaveOptions;
+import org.wodichka.packcontrol.updateformat.CancellationToken;
+import org.wodichka.packcontrol.updateformat.GitHubReleaseDiscoveryService;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
+import java.net.URI;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -46,6 +50,8 @@ public final class PackControlScreen extends Screen {
     private static final int ERROR = 0xFFFF7D7D;
     private static final int TREE_ROWS_PER_PAGE = 8;
     private static final int TREE_ROW_HEIGHT = 18;
+    private static GitHubReleaseDiscoveryService releaseService;
+    private static String releaseServiceApiBase;
 
     private final Screen parent;
     private final PackControlUiState state;
@@ -152,7 +158,7 @@ public final class PackControlScreen extends Screen {
         addCustomButton(Component.translatable("packcontrol.snapshot.edit_urls"), x, y + 75, buttonWidth, 20, this::editModUrls);
         addCustomButton(Component.translatable("packcontrol.action.generate_packwiz"), x, y + 108, buttonWidth, 20, this::generatePackwiz);
         addActionButton("packcontrol.action.repository", x, y + 133, buttonWidth);
-        addActionButton("packcontrol.action.releases", x, y + 158, buttonWidth);
+        addCustomButton(Component.translatable("packcontrol.action.releases"), x, y + 158, buttonWidth, 20, this::checkReleases);
     }
 
     private void initPackFileButtons(int panelX, int panelTop, int panelWidth) {
@@ -402,6 +408,64 @@ private void toggleExpanded(String relativePath) {
         scanResult = PackFileSelectionService.scan();
         treeView = PackFileTreeService.view(filePage, TREE_ROWS_PER_PAGE);
         selectedSnapshot = PackSnapshotService.selectedSnapshot();
+    }
+
+    private void checkReleases() {
+        if (taskRunning) {
+            return;
+        }
+        PackControlConfig.PackControlUserConfig user = PackControlConfig.user();
+        if (!user.useGitHubReleases) {
+            notice = Component.translatable("packcontrol.github.disabled").withStyle(ChatFormatting.YELLOW);
+            return;
+        }
+        taskRunning = true;
+        taskProgress = SnapshotProgress.step("Checking", 0, 1, "GitHub Releases");
+        runningTask = CompletableFuture.runAsync(() -> {
+            PackControlConfig.PackControlPackConfig pack = PackControlConfig.pack();
+            GitHubReleaseDiscoveryService.CheckResult result;
+            try {
+                result = releaseService(user.githubApiBaseUrl).check(
+                        new GitHubReleaseDiscoveryService.CheckRequest(
+                                pack.targetGithubRepository,
+                                pack.updateChannel,
+                                pack.installedVersion,
+                                Duration.ofMinutes(user.updateCheckIntervalMinutes)
+                        ),
+                        CancellationToken.none()
+                );
+                pack.lastUpdateCheck = result.checkedAt().toString();
+                pack.lastReleaseCheckStatus = result.message();
+                if (result.release() != null) {
+                    pack.latestKnownVersion = result.release().version();
+                }
+                PackControlConfig.savePack();
+                ChatFormatting color = switch (result.status()) {
+                    case UPDATE_AVAILABLE -> ChatFormatting.GREEN;
+                    case UP_TO_DATE, NO_MATCHING_RELEASE -> ChatFormatting.YELLOW;
+                    case INVALID_RELEASE, INVALID_CONFIGURATION, NETWORK_ERROR -> ChatFormatting.RED;
+                };
+                pendingNotice = Component.literal(result.message()).withStyle(color);
+            } catch (RuntimeException exception) {
+                pendingNotice = Component.literal("GitHub release check failed: " + exception.getMessage())
+                        .withStyle(ChatFormatting.RED);
+            } finally {
+                taskRunning = false;
+                refreshRequested = true;
+            }
+        });
+    }
+
+    private static synchronized GitHubReleaseDiscoveryService releaseService(String apiBase) {
+        if (releaseService == null || !apiBase.equals(releaseServiceApiBase)) {
+            releaseService = new GitHubReleaseDiscoveryService(
+                    URI.create(apiBase),
+                    new org.wodichka.packcontrol.updateformat.PackHttpClient(),
+                    java.time.Clock.systemUTC()
+            );
+            releaseServiceApiBase = apiBase;
+        }
+        return releaseService;
     }
 
     private void setTaskProgress(SnapshotProgress progress) {

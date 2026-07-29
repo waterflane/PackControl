@@ -148,7 +148,12 @@ public final class PackHttpClient {
                     cancellation
             );
             if (!isRedirect(response.statusCode())) {
-                return new TextResponse(response.statusCode(), response.body(), response.uri());
+                return new TextResponse(
+                        response.statusCode(),
+                        response.body(),
+                        response.uri(),
+                        response.headers().firstValue("ETag").orElse(null)
+                );
             }
             if (redirects >= policy.maxRedirects()) {
                 throw new PermanentHttpException("HTTP redirect limit exceeded for " + initial.uri);
@@ -283,7 +288,10 @@ public final class PackHttpClient {
         return TEMPORARY_STATUSES.contains(status);
     }
 
-    public record TextResponse(int statusCode, String body, URI effectiveUri) {
+    public record TextResponse(int statusCode, String body, URI effectiveUri, String etag) {
+        public TextResponse(int statusCode, String body, URI effectiveUri) {
+            this(statusCode, body, effectiveUri, null);
+        }
     }
 
     public record StreamResponse(

@@ -34,7 +34,7 @@ public record PackControlUiState(
                 user.autoUpdate ? "Auto update enabled" : "Manual updates only",
                 pack.lastUpdateCheck,
                 pack.repositoryDisplay(),
-                user.useGitHubReleases ? "Enabled, not connected" : "Disabled in user config",
+                user.useGitHubReleases ? pack.lastReleaseCheckStatus : "Disabled in user config",
                 "Planned",
                 "Planned",
                 "Not connected",
