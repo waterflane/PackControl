@@ -14,6 +14,7 @@ import org.wodichka.packcontrol.updateformat.PackUpdatePlan.OperationType;
 import org.wodichka.packcontrol.updateformat.TransactionalPackInstaller.FileOperations;
 import org.wodichka.packcontrol.updateformat.TransactionalPackInstaller.InstallResult;
 import org.wodichka.packcontrol.updateformat.TransactionalPackInstaller.NioFileOperations;
+import org.wodichka.packcontrol.updateformat.TransactionalPackInstaller.PreparationResult;
 import org.wodichka.packcontrol.updateformat.TransactionalPackInstaller.RollbackResult;
 
 import java.io.ByteArrayInputStream;
@@ -70,6 +71,66 @@ class TransactionalPackInstallerTest {
         assertEquals(3, state.managedFiles().size());
         assertEquals(3, result.plan().count(OperationType.ADD));
         assertEquals(0, result.plan().count(OperationType.REPLACE));
+    }
+
+    @Test
+    void preparesWithoutMutationThenAppliesPreparedContent() throws Exception {
+        byte[] mod = bytes("prepared mod");
+        PackControlManifest manifest = manifest(
+                "1.0.0",
+                "release-prepared",
+                Map.of("mods/prepared.jar", mod),
+                Map.of("config/prepared.toml", bytes("prepared=true")),
+                List.of()
+        );
+        TransactionalPackInstaller installer = installer(downloaderFor(
+                manifest,
+                Map.of("mods/prepared.jar", mod),
+                Map.of("config/prepared.toml", bytes("prepared=true"))
+        ));
+
+        PreparationResult prepared = installer.prepare(manifest);
+
+        assertTrue(prepared.success(), prepared::message);
+        assertTrue(Files.isDirectory(prepared.stagingDirectory()));
+        assertFalse(Files.exists(instanceRoot.resolve("mods/prepared.jar")));
+        assertFalse(Files.exists(instanceRoot.resolve("config/prepared.toml")));
+        assertTrue(new InstalledStateStore(instanceRoot).load().isEmpty());
+
+        InstallResult applied = installer.applyPreparedUpdate();
+
+        assertTrue(applied.success(), applied::message);
+        assertEquals("prepared mod", Files.readString(instanceRoot.resolve("mods/prepared.jar")));
+        assertEquals("prepared=true", Files.readString(instanceRoot.resolve("config/prepared.toml")));
+        assertEquals("1.0.0", new InstalledStateStore(instanceRoot).load().orElseThrow().packVersion());
+        assertFalse(Files.exists(instanceRoot.resolve(".packcontrol/prepared-update.json")));
+    }
+
+    @Test
+    void revalidatesPreparedContentBeforeApplying() throws Exception {
+        byte[] mod = bytes("verified staged mod");
+        PackControlManifest manifest = manifest(
+                "1.0.0",
+                "release-stage-tamper",
+                Map.of("mods/staged.jar", mod),
+                Map.of(),
+                List.of()
+        );
+        TransactionalPackInstaller installer = installer(downloaderFor(
+                manifest,
+                Map.of("mods/staged.jar", mod),
+                Map.of()
+        ));
+        PreparationResult prepared = installer.prepare(manifest);
+        assertTrue(prepared.success(), prepared::message);
+        Files.writeString(prepared.stagingDirectory().resolve("content/mods/staged.jar"), "tampered");
+
+        InstallResult result = installer.applyPreparedUpdate();
+
+        assertFalse(result.success());
+        assertFalse(result.rollbackAttempted());
+        assertFalse(Files.exists(instanceRoot.resolve("mods/staged.jar")));
+        assertTrue(new InstalledStateStore(instanceRoot).load().isEmpty());
     }
 
     @Test
@@ -202,6 +263,49 @@ class TransactionalPackInstallerTest {
         assertEquals("old version", Files.readString(instanceRoot.resolve("mods/example.jar")));
         InstalledPackState state = new InstalledStateStore(instanceRoot).load().orElseThrow();
         assertEquals("1.0.0", state.packVersion());
+    }
+
+    @Test
+    void manualRollbackRetriesAFailedAutomaticRollback() throws Exception {
+        byte[] oldContent = bytes("old version");
+        byte[] newContent = bytes("new version");
+        PackControlManifest oldManifest = manifest(
+                "1.0.0",
+                "release-old-recovery",
+                Map.of("mods/example.jar", oldContent),
+                Map.of(),
+                List.of()
+        );
+        PackControlManifest newManifest = manifest(
+                "2.0.0",
+                "release-new-recovery",
+                Map.of("mods/example.jar", newContent),
+                Map.of(),
+                List.of()
+        );
+        FakeDownloader downloads = new FakeDownloader();
+        addManifestDownloads(downloads, oldManifest, Map.of("mods/example.jar", oldContent), Map.of());
+        addManifestDownloads(downloads, newManifest, Map.of("mods/example.jar", newContent), Map.of());
+        assertTrue(installer(downloads).install(oldManifest).success());
+        TransactionalPackInstaller recoveringInstaller = new TransactionalPackInstaller(
+                instanceRoot,
+                new PackUpdatePlanner(),
+                downloads,
+                new FailTwiceReplace()
+        );
+        assertTrue(recoveringInstaller.prepare(newManifest).success());
+
+        InstallResult failed = recoveringInstaller.applyPreparedUpdate();
+
+        assertFalse(failed.success());
+        assertTrue(failed.rollbackAttempted());
+        assertFalse(failed.rollbackSucceeded());
+
+        RollbackResult recovered = recoveringInstaller.rollbackLastUpdate();
+
+        assertTrue(recovered.success(), recovered::message);
+        assertEquals("old version", Files.readString(instanceRoot.resolve("mods/example.jar")));
+        assertEquals("1.0.0", new InstalledStateStore(instanceRoot).load().orElseThrow().packVersion());
     }
 
     @Test
@@ -482,6 +586,24 @@ class TransactionalPackInstallerTest {
             if (!failed) {
                 failed = true;
                 throw new IOException("target is not writable");
+            }
+            delegate.replace(source, target);
+        }
+
+        @Override
+        public void delete(Path target) throws IOException {
+            delegate.delete(target);
+        }
+    }
+
+    private static final class FailTwiceReplace implements FileOperations {
+        private final NioFileOperations delegate = new NioFileOperations();
+        private int failuresRemaining = 2;
+
+        @Override
+        public void replace(Path source, Path target) throws IOException {
+            if (failuresRemaining-- > 0) {
+                throw new IOException("target is temporarily not writable");
             }
             delegate.replace(source, target);
         }

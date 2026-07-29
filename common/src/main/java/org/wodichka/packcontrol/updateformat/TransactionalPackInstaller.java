@@ -54,6 +54,7 @@ public final class TransactionalPackInstaller {
     private final Path backupsDirectory;
     private final Path activeJournalPath;
     private final Path lastJournalPath;
+    private final Path preparedUpdatePath;
     private final Path lockPath;
     private final InstalledStateStore stateStore;
     private final PackUpdatePlanner planner;
@@ -81,6 +82,7 @@ public final class TransactionalPackInstaller {
         this.backupsDirectory = controlDirectory.resolve("backups");
         this.activeJournalPath = controlDirectory.resolve("active-transaction.json");
         this.lastJournalPath = controlDirectory.resolve("last-successful-transaction.json");
+        this.preparedUpdatePath = controlDirectory.resolve("prepared-update.json");
         this.lockPath = controlDirectory.resolve("update.lock");
         this.stateStore = new InstalledStateStore(this.instanceRoot);
         this.planner = planner;
@@ -108,11 +110,99 @@ public final class TransactionalPackInstaller {
         }
     }
 
-    public RollbackResult rollbackLastUpdate() {
+    /**
+     * Downloads and verifies the complete update without modifying managed
+     * instance files. A later {@link #applyPreparedUpdate()} call revalidates
+     * both the plan and staged content before applying it transactionally.
+     */
+    public PreparationResult prepare(PackControlManifest manifest) {
         try {
             Files.createDirectories(controlDirectory);
             try (UpdateLock ignored = acquireLock()) {
                 recoverIncompleteTransaction();
+                discardPreparedUpdate();
+                Optional<InstalledPackState> previousState = stateStore.load();
+                PackUpdatePlan plan = planner.plan(manifest, previousState, instanceRoot);
+                if (plan.isBlocked()) {
+                    return PreparationResult.blocked(plan);
+                }
+                String transactionId = Instant.now().toEpochMilli() + "-" + UUID.randomUUID();
+                Path staging = stagingDirectory.resolve(transactionId);
+                Path content = staging.resolve("content");
+                Files.createDirectories(content);
+                try {
+                    stageDownloads(manifest, plan, staging, content);
+                    verifyPreparedContent(plan, content);
+                    writePreparedUpdate(new PreparedUpdate(
+                            transactionId,
+                            Instant.now().toString(),
+                            manifest
+                    ));
+                    return new PreparationResult(
+                            true,
+                            false,
+                            "Update " + manifest.metadata().version() + " is ready to apply",
+                            plan,
+                            staging
+                    );
+                } catch (IOException | InterruptedException | RuntimeException exception) {
+                    deleteTree(staging);
+                    if (exception instanceof InterruptedException) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return PreparationResult.failed("Update preparation failed: " + exception.getMessage(), plan);
+                }
+            }
+        } catch (IOException | RuntimeException exception) {
+            return PreparationResult.failed("Update preparation failed: " + exception.getMessage(), null);
+        }
+    }
+
+    public InstallResult applyPreparedUpdate() {
+        try {
+            Files.createDirectories(controlDirectory);
+            try (UpdateLock ignored = acquireLock()) {
+                recoverIncompleteTransaction();
+                if (Files.notExists(preparedUpdatePath)) {
+                    return InstallResult.failed("No prepared update is available", null, false, false, null);
+                }
+                PreparedUpdate prepared = readPreparedUpdate();
+                Optional<InstalledPackState> previousState = stateStore.load();
+                PackUpdatePlan plan = planner.plan(prepared.manifest, previousState, instanceRoot);
+                if (plan.isBlocked()) {
+                    return InstallResult.blocked(plan);
+                }
+                Path staging = stagingDirectory.resolve(prepared.transactionId);
+                Path content = staging.resolve("content");
+                verifyPreparedContent(plan, content);
+                return applyPrepared(prepared, previousState, plan, staging, content);
+            }
+        } catch (IOException | RuntimeException exception) {
+            return InstallResult.failed(
+                    "Prepared update failed: " + exception.getMessage(),
+                    null,
+                    false,
+                    false,
+                    null
+            );
+        }
+    }
+
+    public RollbackResult rollbackLastUpdate() {
+        try {
+            Files.createDirectories(controlDirectory);
+            try (UpdateLock ignored = acquireLock()) {
+                TransactionJournal incomplete = Files.exists(activeJournalPath)
+                        ? readJournal(activeJournalPath)
+                        : null;
+                recoverIncompleteTransaction();
+                if (incomplete != null) {
+                    return new RollbackResult(
+                            true,
+                            "Restored files from the failed update",
+                            backupDirectory(incomplete.transactionId)
+                    );
+                }
                 if (Files.notExists(lastJournalPath)) {
                     return new RollbackResult(false, "No successful update is available for rollback", null);
                 }
@@ -205,6 +295,119 @@ public final class TransactionalPackInstaller {
                     rollbackSucceeded,
                     backup
             );
+        }
+    }
+
+    private InstallResult applyPrepared(
+            PreparedUpdate prepared,
+            Optional<InstalledPackState> previousState,
+            PackUpdatePlan plan,
+            Path staging,
+            Path content
+    ) {
+        Path backup = backupDirectory(prepared.transactionId);
+        TransactionJournal journal = null;
+        boolean applyStarted = false;
+        try {
+            journal = createBackup(prepared.transactionId, previousState, plan, backup);
+            writeJournal(activeJournalPath, journal);
+            applyStarted = true;
+            apply(plan, content);
+            verifyApplied(plan);
+
+            InstalledPackState newState = createInstalledState(prepared.manifest, plan);
+            stateStore.save(newState);
+            TransactionJournal committed =
+                    journal.withCommittedReleaseId(prepared.manifest.metadata().releaseId());
+            writeJournal(lastJournalPath, committed);
+            Files.deleteIfExists(activeJournalPath);
+            Files.deleteIfExists(preparedUpdatePath);
+            deleteTree(staging);
+            return new InstallResult(
+                    true,
+                    false,
+                    "Installed " + prepared.manifest.metadata().packId()
+                            + " " + prepared.manifest.metadata().version(),
+                    plan,
+                    backup,
+                    false,
+                    false
+            );
+        } catch (IOException | RuntimeException exception) {
+            boolean rollbackAttempted = applyStarted && journal != null;
+            boolean rollbackSucceeded = false;
+            String rollbackMessage = "";
+            if (rollbackAttempted) {
+                try {
+                    rollback(journal);
+                    Files.deleteIfExists(activeJournalPath);
+                    deleteLastJournalIfTransactionMatches(journal.transactionId);
+                    rollbackSucceeded = true;
+                } catch (IOException | RuntimeException rollbackException) {
+                    rollbackMessage = "; rollback failed: " + rollbackException.getMessage();
+                }
+            }
+            if (rollbackSucceeded || !rollbackAttempted) {
+                try {
+                    Files.deleteIfExists(preparedUpdatePath);
+                    deleteTree(staging);
+                } catch (IOException ignored) {
+                    // Preserve the apply failure as the primary result.
+                }
+            }
+            return InstallResult.failed(
+                    "Prepared update failed: " + exception.getMessage() + rollbackMessage,
+                    plan,
+                    rollbackAttempted,
+                    rollbackSucceeded,
+                    backup
+            );
+        }
+    }
+
+    private static void verifyPreparedContent(PackUpdatePlan plan, Path content) throws IOException {
+        for (Operation operation : plan.operations()) {
+            if (operation.type() != OperationType.ADD && operation.type() != OperationType.REPLACE) {
+                continue;
+            }
+            Path staged = resolveUnder(content, operation.path());
+            if (!Files.isRegularFile(staged) || Files.isSymbolicLink(staged)) {
+                throw new IOException("Prepared file is missing: " + operation.path());
+            }
+            DigestedContent digest = FileHashing.inspect(staged);
+            if (digest.size() != operation.size() || !hashesEqual(operation.hashes(), digest.hashes())) {
+                throw new IOException("Prepared file verification failed: " + operation.path());
+            }
+        }
+    }
+
+    private void discardPreparedUpdate() throws IOException {
+        if (Files.notExists(preparedUpdatePath)) {
+            return;
+        }
+        PreparedUpdate previous = readPreparedUpdate();
+        deleteTree(stagingDirectory.resolve(previous.transactionId));
+        Files.deleteIfExists(preparedUpdatePath);
+    }
+
+    private void writePreparedUpdate(PreparedUpdate prepared) throws IOException {
+        Files.createDirectories(preparedUpdatePath.getParent());
+        Path temporary = preparedUpdatePath.resolveSibling(preparedUpdatePath.getFileName() + ".tmp");
+        try (Writer writer = Files.newBufferedWriter(temporary)) {
+            GSON.toJson(prepared, writer);
+        }
+        InstalledStateStore.moveReplacing(temporary, preparedUpdatePath);
+    }
+
+    private PreparedUpdate readPreparedUpdate() throws IOException {
+        try (Reader reader = Files.newBufferedReader(preparedUpdatePath)) {
+            PreparedUpdate prepared = GSON.fromJson(reader, PreparedUpdate.class);
+            if (prepared == null || prepared.transactionId == null || prepared.manifest == null) {
+                throw new IOException("Invalid prepared-update.json");
+            }
+            return prepared;
+        } catch (RuntimeException exception) {
+            throw new IOException("Invalid prepared-update.json", exception);
         }
     }
 
@@ -692,6 +895,22 @@ public final class TransactionalPackInstaller {
     ) {
     }
 
+    public record PreparationResult(
+            boolean success,
+            boolean blocked,
+            String message,
+            PackUpdatePlan plan,
+            Path stagingDirectory
+    ) {
+        private static PreparationResult blocked(PackUpdatePlan plan) {
+            return new PreparationResult(false, true, "Update plan is blocked", plan, null);
+        }
+
+        private static PreparationResult failed(String message, PackUpdatePlan plan) {
+            return new PreparationResult(false, false, message, plan, null);
+        }
+    }
+
     private record BackupEntry(
             String path,
             boolean existedBefore
@@ -707,6 +926,13 @@ public final class TransactionalPackInstaller {
         private TransactionJournal withCommittedReleaseId(String releaseId) {
             return new TransactionJournal(transactionId, entries, previousStateExisted, releaseId);
         }
+    }
+
+    private record PreparedUpdate(
+            String transactionId,
+            String preparedAt,
+            PackControlManifest manifest
+    ) {
     }
 
     private record UpdateLock(

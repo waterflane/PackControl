@@ -70,6 +70,7 @@ class GitHubReleaseDiscoveryServiceTest {
         assertTrue(result.release().manifestUri().toString().endsWith("/manifest-stable.json"));
         assertTrue(result.release().overridesUri().toString().endsWith("/overrides.zip"));
         assertNotNull(result.release().manifest());
+        assertTrue(result.release().changelog().contains("Changes for v1.5.0"));
     }
 
     @Test
@@ -266,6 +267,7 @@ class GitHubReleaseDiscoveryServiceTest {
                 {
                   "tag_name": "%s",
                   "name": "%s",
+                  "body": "Changes for %s",
                   "draft": %s,
                   "prerelease": %s,
                   "published_at": "2026-01-01T00:00:00Z",
@@ -274,6 +276,7 @@ class GitHubReleaseDiscoveryServiceTest {
                   ]
                 }
                 """.formatted(
+                tag,
                 tag,
                 tag,
                 draft,

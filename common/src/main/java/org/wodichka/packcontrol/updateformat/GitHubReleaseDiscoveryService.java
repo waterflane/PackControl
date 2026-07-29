@@ -212,6 +212,7 @@ public final class GitHubReleaseDiscoveryService {
                     stringValue(candidate.release, "tag_name"),
                     candidate.version.toString(),
                     stringValue(candidate.release, "name"),
+                    changelog(candidate.release),
                     candidate.prerelease,
                     stringValue(candidate.release, "published_at"),
                     assets.assets,
@@ -375,6 +376,15 @@ public final class GitHubReleaseDiscoveryService {
         return value == null || value.isJsonNull() ? -1 : value.getAsLong();
     }
 
+    private static String changelog(JsonObject release) {
+        String body = stringValue(release, "body");
+        if (body == null || body.isBlank()) {
+            return "No changelog was provided for this release.";
+        }
+        String normalized = body.replace("\r\n", "\n").replace('\r', '\n').trim();
+        return normalized.length() <= 16_000 ? normalized : normalized.substring(0, 16_000);
+    }
+
     public enum ReleaseChannel {
         STABLE("stable"),
         BETA("beta");
@@ -430,6 +440,7 @@ public final class GitHubReleaseDiscoveryService {
             String tag,
             String version,
             String name,
+            String changelog,
             boolean prerelease,
             String publishedAt,
             List<ReleaseAsset> assets,
