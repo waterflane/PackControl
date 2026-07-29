@@ -97,7 +97,7 @@ MVP является NeoForge.
 | `ManifestParser` | Десериализовать JSON без побочных эффектов | Сетевые загрузки |
 | `ManifestValidator` | Проверить schema, совместимость, пути, размеры, хеши, уникальность и source-specific ограничения | Изменение instance |
 | `VersionPolicy` | Сравнить pack/client versions, каналы, запретить неявный downgrade | Файловые операции |
-| `SourceResolver` | Преобразовать типизированный source в допустимые download request; реализации `ModrinthSource` и `GitHubReleaseAssetSource` | Выбор «latest» во время установки |
+| `PackFileSource`/registry | Преобразовать типизированный source в проверяемые download candidates; реализации `ModrinthSource`, `GitHubReleaseSource` и allowlisted `DirectHttpsSource` | Выбор «latest» во время установки |
 | `ArtifactCache` | Скачать во временный файл, ограничить размер/redirects, проверить хеш и только затем сделать доступным staging | Доверие manifest |
 | `InstallPlanner` | Сравнить manifest, `.packcontrol/installed-state.json` и instance; показать add/replace/remove/conflict | Применение плана |
 | `TransactionManager` | Lock, staging, backup, journal, apply, verify, commit, rollback и crash recovery | Получение токенов публикации |
