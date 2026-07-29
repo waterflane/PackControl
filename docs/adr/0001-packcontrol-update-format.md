@@ -99,7 +99,7 @@ MVP является NeoForge.
 | `VersionPolicy` | Сравнить pack/client versions, каналы, запретить неявный downgrade | Файловые операции |
 | `SourceResolver` | Преобразовать типизированный source в допустимые download request; реализации `ModrinthSource` и `GitHubReleaseAssetSource` | Выбор «latest» во время установки |
 | `ArtifactCache` | Скачать во временный файл, ограничить размер/redirects, проверить хеш и только затем сделать доступным staging | Доверие manifest |
-| `InstallPlanner` | Сравнить manifest, `.packcontrol/installed.json` и instance; показать add/replace/remove/conflict | Применение плана |
+| `InstallPlanner` | Сравнить manifest, `.packcontrol/installed-state.json` и instance; показать add/replace/remove/conflict | Применение плана |
 | `TransactionManager` | Lock, staging, backup, journal, apply, verify, commit, rollback и crash recovery | Получение токенов публикации |
 | `InstalledStateStore` | Атомарно хранить последний committed release и хеши управляемых путей | Сканирование произвольных пользовательских файлов |
 | `UpdateFacade` | Оркестрировать use cases и отдавать immutable progress/result в UI | Minecraft-виджеты |
@@ -276,14 +276,14 @@ Publisher строит `.mrpack` из уже провалидированног�
 ## Транзакционная установка
 
 PackControl управляет только путями, записанными в committed
-`.packcontrol/installed.json`. Неизвестные файлы в `mods`, `config` и `kubejs`
+`.packcontrol/installed-state.json`. Неизвестные файлы в `mods`, `config` и `kubejs`
 не удаляются.
 
 Для одной установки создаются:
 
 ```text
 .packcontrol/
-  installed.json
+  installed-state.json
   update.lock
   staging/<transaction-id>/
   transactions/<transaction-id>/journal.json
@@ -295,7 +295,7 @@ PackControl управляет только путями, записанными
 1. Получить exclusive lock и убедиться, что нет незавершённой транзакции.
 2. Скачать manifest, проверить его хеш/идентичность релиза, schema, версии,
    источники, пути, лимиты и совместимость.
-3. Построить preview относительно `installed.json` и фактических хешей.
+3. Построить preview относительно `installed-state.json` и фактических хешей.
    Операции: `ADD`, `REPLACE`, `REMOVE_MANAGED`, `PRESERVE`, `CONFLICT`.
 4. Скачать все моды и `overrides.zip` в staging. Проверить размер и хеши до
    распаковки. Распаковать в отдельное staging-дерево и сверить точный список
@@ -311,7 +311,7 @@ PackControl управляет только путями, записанными
    обновлять journal.
 8. Повторно проверить хеши всех managed-файлов и точное отсутствие удаляемых
    managed-путей.
-9. Атомарно заменить `installed.json`, записать `COMMITTED`, затем очистить
+9. Атомарно заменить `installed-state.json`, записать `COMMITTED`, затем очистить
    staging. Backup сохраняется согласно retention policy.
 10. При любой ошибке выполнить операции journal в обратном порядке:
     восстановить backup и удалить только файлы с `absentBefore=true`. После
@@ -323,7 +323,7 @@ PackControl управляет только путями, записанными
 обновления и показывает путь к backup, не маскируя исходную ошибку.
 
 Локально изменённый managed-файл определяется сравнением с хешем в
-`installed.json`. Политика MVP по умолчанию — `CONFLICT` и отмена установки до
+`installed-state.json`. Политика MVP по умолчанию — `CONFLICT` и отмена установки до
 явного подтверждения замены. Автоматическое трёхстороннее слияние конфигов и
 KubeJS не выполняется.
 
@@ -345,7 +345,7 @@ KubeJS не выполняется.
 атакой или ошибкой публикации. Ручной downgrade требует отдельного
 подтверждения и всё равно проходит полную транзакцию.
 
-`installed.json` хранит как минимум `packId`, `packVersion`, `releaseId`,
+`installed-state.json` хранит как минимум `packId`, `packVersion`, `releaseId`,
 `schemaVersion`, SHA-256 manifest, время commit и список managed path/hash.
 Rollback меняет локальное installed state, но не создаёт новую pack version.
 
@@ -488,7 +488,7 @@ Legacy importer:
    case-collision detection.
 4. Зафиксировать лимиты: размер manifest, число файлов, размер одного файла,
    общий download и unpacked overrides.
-5. Описать `installed.json` и `journal.json` JSON Schema.
+5. Описать `installed-state.json` и `journal.json` JSON Schema.
 6. Выделить SHA/stream-copy utility из `ModMetadataResolver`.
 7. Сделать read-only adapter из `PackSnapshotManifest` в migration diagnostics.
 8. Создать пустой `publisher` application module с командами

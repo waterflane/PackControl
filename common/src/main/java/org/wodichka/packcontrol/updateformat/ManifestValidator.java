@@ -139,7 +139,11 @@ public final class ManifestValidator {
                 if (validatePath(file.path(), pointer + "/path")) {
                     registerPath(file.path(), pointer + "/path", PathKind.FILE);
                 }
-                validateDownloads(file.downloads(), pointer + "/downloads");
+                validateDownloads(
+                        file.downloads(),
+                        pointer + "/downloads",
+                        Boolean.TRUE.equals(file.required())
+                );
                 validateHashes(file.hashes(), pointer + "/hashes");
                 validateSize(file.size(), limits.maxFileSize(), pointer + "/size", false);
                 addDownloadSize(file.size());
@@ -166,7 +170,7 @@ public final class ManifestValidator {
                     );
                 }
             }
-            validateDownloads(overrides.downloads(), "/overrides/downloads");
+            validateDownloads(overrides.downloads(), "/overrides/downloads", true);
             validateHashes(overrides.hashes(), "/overrides/hashes");
             validateSize(
                     overrides.size(),
@@ -254,9 +258,11 @@ public final class ManifestValidator {
             }
         }
 
-        private void validateDownloads(List<String> downloads, String pointer) {
+        private void validateDownloads(List<String> downloads, String pointer, boolean required) {
             if (downloads == null || downloads.isEmpty()) {
-                error(ManifestErrorCode.REQUIRED_VALUE, pointer, "At least one download URL is required");
+                if (required) {
+                    error(ManifestErrorCode.REQUIRED_VALUE, pointer, "At least one download URL is required");
+                }
                 return;
             }
             if (downloads.size() > limits.maxDownloadsPerArtifact()) {
