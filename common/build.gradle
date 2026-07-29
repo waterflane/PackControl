@@ -2,7 +2,17 @@ architectury {
     common rootProject.enabled_platforms.split(',')
 }
 
+repositories {
+    mavenCentral()
+}
+
 dependencies {
     modImplementation "net.fabricmc:fabric-loader:$rootProject.fabric_loader_version"
     modImplementation "dev.architectury:architectury:$rootProject.architectury_api_version"
+
+    testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
 }

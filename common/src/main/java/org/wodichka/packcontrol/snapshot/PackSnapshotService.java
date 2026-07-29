@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 public final class PackSnapshotService {
@@ -25,54 +26,132 @@ public final class PackSnapshotService {
     }
 
     public static SnapshotSaveResult saveSnapshot() {
+        return saveSnapshot(SnapshotSaveOptions.defaults(), progress -> { });
+    }
+
+    public static SnapshotSaveResult saveSnapshot(SnapshotSaveOptions options, Consumer<SnapshotProgress> progress) {
+        Consumer<SnapshotProgress> reporter = progress == null ? ignored -> { } : progress;
         Path root = PackControlConfig.gameDirectory();
         if (root == null) {
-            return SnapshotSaveResult.failed("Game directory is not available");
+            SnapshotSaveResult result = SnapshotSaveResult.failed("Game directory is not available");
+            reporter.accept(SnapshotProgress.done(result.message(), false));
+            return result;
         }
 
-        String snapshotName = snapshotName();
-        Path snapshotDir = snapshotsDirectory(root).resolve(snapshotName);
-        PackSnapshotManifest manifest = new PackSnapshotManifest();
-        manifest.name = snapshotName;
-        manifest.createdAt = Instant.now().toEpochMilli();
-        manifest.minecraftVersion = PackControlConfig.pack().minecraftVersion;
-        manifest.loader = PackControlConfig.pack().modLoader;
-        manifest.loaderVersion = PackControlConfig.pack().modLoaderVersion;
-        manifest.filesArchive = ARCHIVE_NAME;
-
-        List<PackSnapshotManifest.FileEntry> archiveEntries = new ArrayList<>();
-        int unresolved = 0;
-        PackFileSelectionService.PackFileScanResult scan = PackFileSelectionService.scan();
         try {
-            for (PackFileSelectionService.PackFileEntry entry : scan.includedFiles()) {
+            reporter.accept(SnapshotProgress.step("Preparing", 0, 6, "Reading pack metadata"));
+            String snapshotName = snapshotName(options);
+            Path snapshotDir = snapshotsDirectory(root).resolve(snapshotName);
+            PackControlConfig.PackControlPackConfig pack = PackControlConfig.pack();
+
+            PackSnapshotManifest manifest = new PackSnapshotManifest();
+            manifest.name = snapshotName;
+            manifest.createdAt = Instant.now().toEpochMilli();
+            manifest.version = clean(options.version(), pack.packVersion);
+            manifest.commitMessage = clean(options.commitMessage(), "");
+            manifest.author = clean(options.author(), pack.packAuthor);
+            manifest.minecraftVersion = pack.minecraftVersion;
+            manifest.loader = pack.modLoader;
+            manifest.loaderVersion = pack.modLoaderVersion;
+            manifest.filesArchive = ARCHIVE_NAME;
+
+            reporter.accept(SnapshotProgress.step("Scanning", 1, 6, "Collecting selected files"));
+            PackFileSelectionService.PackFileScanResult scan = PackFileSelectionService.scan();
+            List<PackFileSelectionService.PackFileEntry> entries = scan.includedFiles();
+            List<PackSnapshotManifest.FileEntry> archiveEntries = new ArrayList<>();
+            int unresolved = 0;
+            int total = Math.max(entries.size(), 1);
+            int index = 0;
+
+            for (PackFileSelectionService.PackFileEntry entry : entries) {
+                index++;
                 if (!SnapshotArchiveService.safeRelative(entry.relativePath())) {
                     continue;
                 }
                 if (isMod(entry.relativePath())) {
+                    reporter.accept(SnapshotProgress.step("Resolving mods", index, total, entry.relativePath()));
                     PackSnapshotManifest.ModEntry mod = ModMetadataResolver.resolve(entry.absolutePath());
                     manifest.mods.add(mod);
                     if (mod.required && (mod.downloadUrl == null || mod.downloadUrl.isBlank())) {
                         unresolved++;
                     }
                 } else {
+                    reporter.accept(SnapshotProgress.step("Hashing files", index, total, entry.relativePath()));
                     PackSnapshotManifest.FileEntry file = fileEntry(entry);
                     archiveEntries.add(file);
                     addByType(manifest, file);
                 }
             }
+
+            reporter.accept(SnapshotProgress.step("Sorting", 4, 6, "Preparing manifest"));
             manifest.mods.sort(Comparator.comparing(mod -> mod.filename, String.CASE_INSENSITIVE_ORDER));
             archiveEntries.sort(Comparator.comparing(file -> file.path, String.CASE_INSENSITIVE_ORDER));
+
+            reporter.accept(SnapshotProgress.step("Archiving", 5, 6, archiveEntries.size() + " files"));
             Files.createDirectories(snapshotDir);
             SnapshotArchiveService.writeArchive(root, snapshotDir.resolve(ARCHIVE_NAME), archiveEntries);
+
+            reporter.accept(SnapshotProgress.step("Writing", 6, 6, "snapshot.json"));
             writeSnapshot(snapshotDir.resolve("snapshot.json"), manifest);
             updateStatus(snapshotName, snapshotDir, unresolved, manifest.mods.size(), archiveEntries.size(), "Saved snapshot " + snapshotName);
-            return new SnapshotSaveResult(true, "Saved snapshot " + snapshotName + ": " + manifest.mods.size() + " mods, " + archiveEntries.size() + " archived files, " + unresolved + " unresolved mods", snapshotName, snapshotDir, manifest.mods.size(), archiveEntries.size(), unresolved);
+            PackControlConfig.pack().selectedSnapshotPath = snapshotDir.toString();
+            PackControlConfig.savePack();
+
+            SnapshotSaveResult result = new SnapshotSaveResult(true, "Saved snapshot " + snapshotName + ": " + manifest.mods.size() + " mods, " + archiveEntries.size() + " archived files, " + unresolved + " unresolved mods", snapshotName, snapshotDir, manifest.mods.size(), archiveEntries.size(), unresolved);
+            reporter.accept(SnapshotProgress.done(result.message(), true));
+            return result;
         } catch (IOException | RuntimeException exception) {
             PackControl.LOGGER.error("Failed to save PackControl snapshot", exception);
             PackControlConfig.pack().lastSnapshotStatus = "Snapshot failed: " + exception.getMessage();
             PackControlConfig.savePack();
-            return SnapshotSaveResult.failed("Snapshot failed: " + exception.getMessage());
+            SnapshotSaveResult result = SnapshotSaveResult.failed("Snapshot failed: " + exception.getMessage());
+            reporter.accept(SnapshotProgress.done(result.message(), false));
+            return result;
         }
+    }
+
+    public static List<SnapshotSummary> snapshots() {
+        Path root = PackControlConfig.gameDirectory();
+        if (root == null || Files.notExists(snapshotsDirectory(root))) {
+            return List.of();
+        }
+        try (Stream<Path> stream = Files.list(snapshotsDirectory(root))) {
+            return stream.filter(Files::isDirectory)
+                    .filter(path -> Files.exists(path.resolve("snapshot.json")))
+                    .sorted((left, right) -> Long.compare(lastModified(right), lastModified(left)))
+                    .map(path -> {
+                        LoadedSnapshot loaded = loadSnapshotNoStatus(path);
+                        String name = loaded.success() && loaded.manifest() != null ? loaded.manifest().name : path.getFileName().toString();
+                        String version = loaded.success() && loaded.manifest() != null ? loaded.manifest().version : "";
+                        long createdAt = loaded.success() && loaded.manifest() != null ? loaded.manifest().createdAt : lastModified(path);
+                        int mods = loaded.success() && loaded.manifest() != null && loaded.manifest().mods != null ? loaded.manifest().mods.size() : 0;
+                        int unresolved = loaded.success() && loaded.manifest() != null ? unresolvedMods(loaded.manifest()) : 0;
+                        return new SnapshotSummary(name, version, createdAt, path, mods, unresolved);
+                    })
+                    .toList();
+        } catch (IOException exception) {
+            return List.of();
+        }
+    }
+
+    public static LoadedSnapshot selectedSnapshot() {
+        String selected = PackControlConfig.pack().selectedSnapshotPath;
+        if (selected != null && !selected.isBlank()) {
+            LoadedSnapshot loaded = loadSnapshot(Path.of(selected));
+            if (loaded.success()) {
+                return loaded;
+            }
+        }
+        return latestSnapshot();
+    }
+
+    public static LoadedSnapshot selectSnapshot(Path snapshotDir) {
+        LoadedSnapshot loaded = loadSnapshot(snapshotDir);
+        if (loaded.success()) {
+            PackControlConfig.pack().selectedSnapshotPath = snapshotDir.toString();
+            PackControlConfig.savePack();
+        }
+        return loaded;
     }
 
     public static LoadedSnapshot latestSnapshot() {
@@ -99,25 +178,18 @@ public final class PackSnapshotService {
     }
 
     public static LoadedSnapshot loadSnapshot(Path snapshotDir) {
-        Path manifestPath = snapshotDir.resolve("snapshot.json");
-        if (Files.notExists(manifestPath)) {
-            return LoadedSnapshot.failed("Snapshot file is missing: " + manifestPath);
+        LoadedSnapshot loaded = loadSnapshotNoStatus(snapshotDir);
+        if (!loaded.success()) {
+            return loaded;
         }
-        try (Reader reader = Files.newBufferedReader(manifestPath)) {
-            PackSnapshotManifest manifest = GSON.fromJson(reader, PackSnapshotManifest.class);
-            if (manifest == null) {
-                return LoadedSnapshot.failed("Snapshot is empty");
-            }
-            PackControlConfig.PackControlPackConfig pack = PackControlConfig.pack();
-            pack.activeSnapshotName = manifest.name;
-            pack.activeSnapshotPath = snapshotDir.toString();
-            pack.unresolvedSnapshotMods = unresolvedMods(manifest);
-            pack.lastSnapshotStatus = "Loaded snapshot " + manifest.name;
-            PackControlConfig.savePack();
-            return new LoadedSnapshot(true, "Loaded snapshot " + manifest.name, manifest, snapshotDir);
-        } catch (IOException | RuntimeException exception) {
-            return LoadedSnapshot.failed("Snapshot load failed: " + exception.getMessage());
-        }
+        PackControlConfig.PackControlPackConfig pack = PackControlConfig.pack();
+        pack.activeSnapshotName = loaded.manifest().name;
+        pack.activeSnapshotPath = loaded.snapshotDirectory().toString();
+        pack.selectedSnapshotPath = loaded.snapshotDirectory().toString();
+        pack.unresolvedSnapshotMods = unresolvedMods(loaded.manifest());
+        pack.lastSnapshotStatus = "Loaded snapshot " + loaded.manifest().name;
+        PackControlConfig.savePack();
+        return loaded;
     }
 
     public static List<String> unresolvedModNames(PackSnapshotManifest manifest) {
@@ -141,6 +213,7 @@ public final class PackSnapshotService {
         PackControlConfig.PackControlPackConfig pack = PackControlConfig.pack();
         pack.activeSnapshotName = snapshotName;
         pack.activeSnapshotPath = snapshotDir.toString();
+        pack.selectedSnapshotPath = snapshotDir.toString();
         pack.unresolvedSnapshotMods = unresolved;
         pack.lastSnapshotStatus = message + " (" + modCount + " mods, " + fileCount + " files)";
         PackControlConfig.savePack();
@@ -186,13 +259,30 @@ public final class PackSnapshotService {
         return slash <= 0 ? "file" : relativePath.substring(0, slash);
     }
 
-    private static String snapshotName() {
-        String base = PackControlConfig.pack().packVersion;
+    private static LoadedSnapshot loadSnapshotNoStatus(Path snapshotDir) {
+        Path manifestPath = snapshotDir.resolve("snapshot.json");
+        if (Files.notExists(manifestPath)) {
+            return LoadedSnapshot.failed("Snapshot file is missing: " + manifestPath);
+        }
+        try (Reader reader = Files.newBufferedReader(manifestPath)) {
+            PackSnapshotManifest manifest = GSON.fromJson(reader, PackSnapshotManifest.class);
+            return manifest == null ? LoadedSnapshot.failed("Snapshot is empty") : new LoadedSnapshot(true, "Loaded snapshot " + manifest.name, manifest, snapshotDir);
+        } catch (IOException | RuntimeException exception) {
+            return LoadedSnapshot.failed("Snapshot load failed: " + exception.getMessage());
+        }
+    }
+
+    private static String snapshotName(SnapshotSaveOptions options) {
+        String base = clean(options.name(), PackControlConfig.pack().packVersion);
         if (base == null || base.isBlank()) {
             base = "release-1";
         }
         String cleaned = base.trim().replaceAll("[^A-Za-z0-9._-]", "-");
         return cleaned.isBlank() ? "release-1" : cleaned;
+    }
+
+    private static String clean(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
     }
 
     private static long lastModified(Path path) {
@@ -201,6 +291,9 @@ public final class PackSnapshotService {
         } catch (IOException exception) {
             return 0L;
         }
+    }
+
+    public record SnapshotSummary(String name, String version, long createdAt, Path snapshotDirectory, int modCount, int unresolvedMods) {
     }
 
     public record SnapshotSaveResult(boolean success, String message, String snapshotName, Path snapshotDirectory, int modCount, int archivedFileCount, int unresolvedMods) {

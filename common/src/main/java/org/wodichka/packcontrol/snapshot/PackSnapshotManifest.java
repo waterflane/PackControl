@@ -7,6 +7,9 @@ public final class PackSnapshotManifest {
     public int schemaVersion = 1;
     public String name = "release-1";
     public long createdAt = 0L;
+    public String version = "0.1.0-dev";
+    public String commitMessage = "";
+    public String author = "";
     public String minecraftVersion = "1.21.1";
     public String loader = "neoforge";
     public String loaderVersion = "21.1.233";
@@ -19,6 +22,8 @@ public final class PackSnapshotManifest {
     public static final class ModEntry {
         public String name = "";
         public String filename = "";
+        public String originalFilename = "";
+        public boolean enabled = true;
         public String source = "custom";
         public String downloadUrl = "";
         public String sha256 = "";

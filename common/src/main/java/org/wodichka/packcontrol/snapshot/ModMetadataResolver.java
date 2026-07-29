@@ -37,7 +37,11 @@ public final class ModMetadataResolver {
         entry.sha512 = hash(modFile, "SHA-512");
         entry.required = true;
 
+        String targetFilename = entry.filename;
         String manual = manualUrl(entry.filename);
+        if (manual.isBlank() && !entry.originalFilename.isBlank()) {
+            manual = manualUrl(entry.originalFilename);
+        }
         if (!manual.isBlank()) {
             entry.downloadUrl = manual;
             entry.source = sourceFromUrl(manual);
@@ -147,6 +151,25 @@ public final class ModMetadataResolver {
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException(algorithm + " is not available", exception);
         }
+    }
+
+    public static boolean isDisabledModFilename(String filename) {
+        String lower = filename == null ? "" : filename.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".jar.disabled") || lower.endsWith(".jar.disable");
+    }
+
+    public static String originalModFilename(String filename) {
+        if (filename == null) {
+            return "";
+        }
+        String lower = filename.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".disabled")) {
+            return filename.substring(0, filename.length() - ".disabled".length());
+        }
+        if (lower.endsWith(".disable")) {
+            return filename.substring(0, filename.length() - ".disable".length());
+        }
+        return filename;
     }
 
     private static String readableName(String filename) {

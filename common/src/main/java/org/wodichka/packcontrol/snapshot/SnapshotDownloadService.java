@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 public final class SnapshotDownloadService {
     private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NORMAL).build();
@@ -23,7 +24,11 @@ public final class SnapshotDownloadService {
     }
 
     public static SnapshotInstallPlan previewLatest() {
-        PackSnapshotService.LoadedSnapshot loaded = PackSnapshotService.latestSnapshot();
+        return previewSelected();
+    }
+
+    public static SnapshotInstallPlan previewSelected() {
+        PackSnapshotService.LoadedSnapshot loaded = PackSnapshotService.selectedSnapshot();
         if (!loaded.success()) {
             return SnapshotInstallPlan.failed(loaded.message());
         }
@@ -31,32 +36,49 @@ public final class SnapshotDownloadService {
     }
 
     public static SnapshotInstallResult installLatest() {
-        PackSnapshotService.LoadedSnapshot loaded = PackSnapshotService.latestSnapshot();
+        return installSelected(progress -> { });
+    }
+
+    public static SnapshotInstallResult installSelected(Consumer<SnapshotProgress> progress) {
+        Consumer<SnapshotProgress> reporter = progress == null ? ignored -> { } : progress;
+        reporter.accept(SnapshotProgress.step("Preparing", 0, 1, "Opening selected snapshot"));
+        PackSnapshotService.LoadedSnapshot loaded = PackSnapshotService.selectedSnapshot();
         if (!loaded.success()) {
-            return SnapshotInstallResult.failed(loaded.message());
-        }
-        SnapshotInstallPlan plan = preview(loaded.manifest(), loaded.snapshotDirectory());
-        if (!plan.success()) {
-            return SnapshotInstallResult.failed(plan.message());
-        }
-        if (plan.unresolvedMods() > 0) {
-            String message = "Download blocked: " + plan.unresolvedMods() + " mods need downloadUrl";
-            updateDownloadStatus(message, "");
-            return SnapshotInstallResult.failed(message);
+            SnapshotInstallResult result = SnapshotInstallResult.failed(loaded.message());
+            reporter.accept(SnapshotProgress.done(result.message(), false));
+            return result;
         }
 
-        Path root = PackControlConfig.gameDirectory();
-        if (root == null) {
-            return SnapshotInstallResult.failed("Game directory is not available");
+        reporter.accept(SnapshotProgress.step("Previewing", 1, 4, loaded.manifest().name));
+        SnapshotInstallPlan plan = preview(loaded.manifest(), loaded.snapshotDirectory());
+        if (!plan.success()) {
+            SnapshotInstallResult result = SnapshotInstallResult.failed(plan.message());
+            reporter.accept(SnapshotProgress.done(result.message(), false));
+            return result;
         }
+Path root = PackControlConfig.gameDirectory();
+        if (root == null) {
+            SnapshotInstallResult result = SnapshotInstallResult.failed("Game directory is not available");
+            reporter.accept(SnapshotProgress.done(result.message(), false));
+            return result;
+        }
+
         Path backupDir = root.resolve(".packcontrol/backups").resolve(String.valueOf(Instant.now().toEpochMilli()));
         Path downloadsDir = root.resolve(".packcontrol/downloads");
+        List<PackSnapshotManifest.FileEntry> archivedFiles = archivedFiles(loaded.manifest());
+        int total = Math.max(loaded.manifest().mods.size() + archivedFiles.size() + 3, 1);
+        int step = 2;
         try {
+            reporter.accept(SnapshotProgress.step("Backing up", step++, total, "Preparing safe install"));
             Files.createDirectories(backupDir);
             Files.createDirectories(downloadsDir);
             int installedMods = 0;
+            int skippedMods = 0;
+
             for (PackSnapshotManifest.ModEntry mod : loaded.manifest().mods) {
+                reporter.accept(SnapshotProgress.step("Downloading mods", step++, total, mod.filename));
                 if (mod.downloadUrl == null || mod.downloadUrl.isBlank()) {
+                    skippedMods++;
                     continue;
                 }
                 Path target = root.resolve("mods").resolve(mod.filename).normalize();
@@ -69,21 +91,27 @@ public final class SnapshotDownloadService {
                 }
                 SnapshotArchiveService.backupIfExists(root, target, backupDir);
                 Path downloaded = downloadMod(downloadsDir, mod);
+                reporter.accept(SnapshotProgress.step("Verifying", step, total, mod.filename));
                 String downloadedHash = ModMetadataResolver.hash(downloaded, "SHA-256");
                 if (!mod.sha256.equalsIgnoreCase(downloadedHash)) {
                     String message = "Hash mismatch for " + mod.filename;
                     updateDownloadStatus(message, backupDir.toString());
-                    return SnapshotInstallResult.failed(message);
+                    SnapshotInstallResult result = SnapshotInstallResult.failed(message);
+                    reporter.accept(SnapshotProgress.done(result.message(), false));
+                    return result;
                 }
                 Files.createDirectories(target.getParent());
                 Files.copy(downloaded, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
                 installedMods++;
             }
-            List<PackSnapshotManifest.FileEntry> archivedFiles = archivedFiles(loaded.manifest());
+
+            reporter.accept(SnapshotProgress.step("Restoring files", total - 1, total, archivedFiles.size() + " archived files"));
             SnapshotArchiveService.extractArchive(loaded.snapshotDirectory().resolve(loaded.manifest().filesArchive), root, archivedFiles, backupDir);
-            String message = "Installed snapshot " + loaded.manifest().name + ": " + installedMods + " mods, " + archivedFiles.size() + " archived files";
+            String message = "Installed snapshot " + loaded.manifest().name + ": " + installedMods + " mods, " + archivedFiles.size() + " archived files" + (skippedMods > 0 ? ", skipped " + skippedMods + " mods without downloadUrl" : "");
             updateDownloadStatus(message, backupDir.toString());
-            return new SnapshotInstallResult(true, message, backupDir, installedMods, archivedFiles.size());
+            SnapshotInstallResult result = new SnapshotInstallResult(true, message, backupDir, installedMods, archivedFiles.size());
+            reporter.accept(SnapshotProgress.done(result.message(), true));
+            return result;
         } catch (IOException | InterruptedException | RuntimeException exception) {
             if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -91,11 +119,13 @@ public final class SnapshotDownloadService {
             PackControl.LOGGER.error("Snapshot install failed", exception);
             String message = "Install failed: " + exception.getMessage();
             updateDownloadStatus(message, backupDir.toString());
-            return SnapshotInstallResult.failed(message);
+            SnapshotInstallResult result = SnapshotInstallResult.failed(message);
+            reporter.accept(SnapshotProgress.done(result.message(), false));
+            return result;
         }
     }
 
-    private static SnapshotInstallPlan preview(PackSnapshotManifest manifest, Path snapshotDirectory) {
+    public static SnapshotInstallPlan preview(PackSnapshotManifest manifest, Path snapshotDirectory) {
         Path root = PackControlConfig.gameDirectory();
         if (root == null) {
             return SnapshotInstallPlan.failed("Game directory is not available");
@@ -138,7 +168,7 @@ public final class SnapshotDownloadService {
                 affected.add(file.path);
             }
         }
-        String message = "Preview " + manifest.name + ": +" + added + " mods, ~" + updated + " mods, " + archivedFiles.size() + " archived files, " + unresolved + " unresolved";
+        String message = "Preview " + manifest.name + ": +" + added + " mods, ~" + updated + " mods, " + archivedFiles.size() + " archived files" + (unresolved > 0 ? ", " + unresolved + " mods will be skipped without URL" : "");
         return new SnapshotInstallPlan(true, message, manifest.name, added, updated, unchanged, archivedFiles.size(), unresolved, List.copyOf(warnings), List.copyOf(affected), snapshotDirectory);
     }
 

@@ -290,6 +290,8 @@ public final class PackControlConfig {
         public String lastGenerationStatus = "Never generated";
         public String activeSnapshotName = "none";
         public String activeSnapshotPath = "";
+        public String selectedSnapshotPath = "";
+        public String lastSnapshotProgress = "Idle";
         public String lastSnapshotStatus = "No snapshot saved";
         public String lastDownloadStatus = "Never downloaded";
         public String lastBackupPath = "";
@@ -332,6 +334,8 @@ public final class PackControlConfig {
             lastGenerationStatus = clean(lastGenerationStatus, "Never generated");
             activeSnapshotName = clean(activeSnapshotName, "none");
             activeSnapshotPath = activeSnapshotPath == null ? "" : activeSnapshotPath.trim();
+            selectedSnapshotPath = selectedSnapshotPath == null ? "" : selectedSnapshotPath.trim();
+            lastSnapshotProgress = clean(lastSnapshotProgress, "Idle");
             lastSnapshotStatus = clean(lastSnapshotStatus, "No snapshot saved");
             lastDownloadStatus = clean(lastDownloadStatus, "Never downloaded");
             lastBackupPath = lastBackupPath == null ? "" : lastBackupPath.trim();
