@@ -1,0 +1,24 @@
+{
+  "packId": "fixture-pack",
+  "name": "PackControl Fixture",
+  "version": "1.0.0",
+  "releaseId": "fixture-1.0.0",
+  "summary": "Small deterministic publisher fixture",
+  "minecraftVersion": "1.21.1",
+  "loader": "neoforge",
+  "loaderVersion": "21.1.200",
+  "minimumPackControlVersion": "1.0.0",
+  "releaseBaseUrl": "https://downloads.example.invalid/fixture/1.0.0/",
+  "optionalMods": [
+    "mods/beta.jar"
+  ],
+  "githubMods": {
+    "mods/custom.jar": {
+      "owner": "example",
+      "repository": "custom-mod",
+      "tag": "v1.0.0",
+      "assetName": "custom.jar",
+      "allowThirdPartyJar": true
+    }
+  }
+}

@@ -11,7 +11,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
-final class FileHashing {
+public final class FileHashing {
     private FileHashing() {
     }
 
@@ -19,10 +19,18 @@ final class FileHashing {
         return hashes(path).sha256();
     }
 
-    static Hashes hashes(Path path) throws IOException {
+    public static Hashes hashes(Path path) throws IOException {
+        return inspect(path).hashes();
+    }
+
+    public static DigestedContent inspect(Path path) throws IOException {
         try (InputStream input = Files.newInputStream(path)) {
-            return digest(input, null, Long.MAX_VALUE).hashes();
+            return inspect(input);
         }
+    }
+
+    public static DigestedContent inspect(InputStream input) throws IOException {
+        return digest(input, null, Long.MAX_VALUE);
     }
 
     static DigestedContent copyAndHash(InputStream input, Path target, long maximumBytes) throws IOException {
@@ -72,6 +80,6 @@ final class FileHashing {
         return HexFormat.of().formatHex(digest.digest());
     }
 
-    record DigestedContent(long size, Hashes hashes) {
+    public record DigestedContent(long size, Hashes hashes) {
     }
 }
