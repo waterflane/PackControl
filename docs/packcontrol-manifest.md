@@ -131,3 +131,54 @@ artifact.
 Unknown top-level JSON fields are currently ignored by Gson. Publishers should
 emit only fields defined by the selected `schemaVersion`; a breaking format
 change requires a new schema version.
+
+## Imported mrpack bootstrap
+
+Publisher-generated `.mrpack` files contain two generated service entries
+beside ordinary user overrides:
+
+```text
+overrides/packcontrol-pack.json
+overrides/.packcontrol/bootstrap.json
+```
+
+They are installation metadata, not manifest `overrides.entries`. Therefore
+they are neither packed into the standalone `overrides.zip` nor presented as
+user configuration overrides.
+
+`packcontrol-pack.json` version 1 contains:
+
+```json
+{
+  "schemaVersion": 1,
+  "targetGithubRepository": "example/example-pack",
+  "updateChannel": "stable"
+}
+```
+
+`updateChannel` is `stable` or `beta`. The repository is the public GitHub
+`owner/repository` used for read-only release discovery.
+
+The bootstrap schema is:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schemaVersion` | integer | Must be `1`. |
+| `packId` | string | Must match the published manifest. |
+| `packVersion` | SemVer string | Version already imported by the launcher. |
+| `releaseId` | string | Immutable release identity. |
+| `manifestSha256` | 64-character hex string | SHA-256 of the published manifest file. |
+| `managedFiles` | array | Exact content eligible for initial adoption. |
+
+Each `managedFiles` entry has `path`, `size`, and complete `sha1`, `sha256`,
+and `sha512` hashes. The list is the union of manifest `files` and ordinary
+`overrides.entries`; it excludes both service entries.
+
+On startup PackControl validates bootstrap syntax, safe relative paths,
+duplicates, conflicts, limits, regular-file type, size, and every hash. Only a
+complete match is converted to `.packcontrol/installed-state.json`. A mismatch
+does not partially adopt files. Repeating the same bootstrap is a no-op, while
+a different existing installed state blocks adoption and is never overwritten.
+
+Bootstrap performs no downloads and applies no update while Minecraft is
+running.

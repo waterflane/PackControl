@@ -9,7 +9,6 @@ pack-repository/
 │   ├── config/example.toml
 │   ├── defaultconfigs/server.toml
 │   └── kubejs/server_scripts/example.js
-├── packcontrol-pack.json
 └── packcontrol-publisher.json
 ```
 
@@ -18,6 +17,11 @@ Copy your permitted instance inputs into `instance/`. Place mod JARs under
 their license permits it. Modrinth matches are resolved in one SHA-512 batch.
 Each non-Modrinth JAR needs an explicit public GitHub Release Asset mapping and
 `allowThirdPartyJar: true`.
+
+Set `targetGithubRepository` and `updateChannel` in
+`packcontrol-publisher.json`. Publisher generates `packcontrol-pack.json` and
+the bootstrap inside the `.mrpack`; neither file belongs in the source
+instance.
 
 Build and validate from the repository root:
 

@@ -1,0 +1,16 @@
+{
+  "packId": "bootstrap-fixture",
+  "name": "Bootstrap Fixture",
+  "version": "1.0.1",
+  "releaseId": "bootstrap-fixture-1.0.1",
+  "summary": "First update after mrpack import",
+  "minecraftVersion": "1.21.1",
+  "loader": "neoforge",
+  "loaderVersion": "21.1.233",
+  "minimumPackControlVersion": "0.1.0",
+  "releaseBaseUrl": "https://downloads.example.invalid/bootstrap/1.0.1/",
+  "targetGithubRepository": "example/bootstrap-fixture",
+  "updateChannel": "stable",
+  "optionalMods": [],
+  "githubMods": {}
+}

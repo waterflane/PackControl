@@ -14,6 +14,7 @@ Semantic Versioning.
   export.
 - Read-only GitHub Releases discovery and guided update UI.
 - Pull request CI and draft release automation.
+- Bootstrap adoption for Publisher-generated `.mrpack` installations.
 
 ### Changed
 

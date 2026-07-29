@@ -27,6 +27,8 @@ public record PublisherConfig(
         String loaderVersion,
         String minimumPackControlVersion,
         String releaseBaseUrl,
+        String targetGithubRepository,
+        String updateChannel,
         List<String> optionalMods,
         Map<String, GitHubModMapping> githubMods
 ) {

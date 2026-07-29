@@ -9,6 +9,8 @@
   "loaderVersion": "21.1.200",
   "minimumPackControlVersion": "1.0.0",
   "releaseBaseUrl": "https://downloads.example.invalid/fixture/1.0.0/",
+  "targetGithubRepository": "example/fixture-pack",
+  "updateChannel": "stable",
   "optionalMods": [
     "mods/beta.jar"
   ],

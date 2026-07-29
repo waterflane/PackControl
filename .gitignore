@@ -26,6 +26,7 @@ saves/
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
 !packcontrol-publisher/src/test/resources/fixture-pack/mods/*.jar
+!packcontrol-publisher/src/test/resources/bootstrap-update/*/mods/*.jar
 
 # Local PackControl state and publisher output
 /.packcontrol/

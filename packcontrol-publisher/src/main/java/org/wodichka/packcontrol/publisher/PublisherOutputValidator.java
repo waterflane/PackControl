@@ -8,6 +8,9 @@ import org.wodichka.packcontrol.updateformat.FileHashing;
 import org.wodichka.packcontrol.updateformat.ManifestJson;
 import org.wodichka.packcontrol.updateformat.ManifestValidationError;
 import org.wodichka.packcontrol.updateformat.ManifestValidator;
+import org.wodichka.packcontrol.updateformat.PackBootstrap;
+import org.wodichka.packcontrol.updateformat.PackBootstrapJson;
+import org.wodichka.packcontrol.updateformat.PackBootstrapValidator;
 import org.wodichka.packcontrol.updateformat.PackControlManifest;
 import org.wodichka.packcontrol.updateformat.PackControlManifest.Hashes;
 import org.wodichka.packcontrol.updateformat.PackControlManifest.OverrideEntry;
@@ -49,7 +52,7 @@ public final class PublisherOutputValidator {
             validateOverrides(output.resolve(manifest.overrides().fileName()), manifest, errors);
             Path mrpack = findMrpack(output, errors);
             if (mrpack != null) {
-                validateMrpack(mrpack, manifest, errors);
+                validateMrpack(mrpack, manifest, manifestPath, errors);
             }
             validateChecksums(output, mrpack, errors);
         } catch (Exception exception) {
@@ -106,6 +109,7 @@ public final class PublisherOutputValidator {
     private static void validateMrpack(
             Path mrpack,
             PackControlManifest manifest,
+            Path manifestPath,
             List<String> errors
     ) throws IOException {
         Map<String, OverrideEntry> expectedOverrideEntries = new HashMap<>();
@@ -132,10 +136,44 @@ public final class PublisherOutputValidator {
             }
 
             Set<String> seenOverrides = new HashSet<>();
+            boolean seenPackConfig = false;
+            boolean seenBootstrap = false;
             var entries = zip.entries();
             while (entries.hasMoreElements()) {
                 ZipEntry entry = entries.nextElement();
                 if (entry.isDirectory() || entry.getName().equals("modrinth.index.json")) {
+                    continue;
+                }
+                if (entry.getName().equals("overrides/" + PackControlPublisher.PACK_CONFIG_FILE)) {
+                    if (seenPackConfig) {
+                        errors.add("Duplicate .mrpack packcontrol-pack.json");
+                    }
+                    seenPackConfig = true;
+                    try (Reader reader = new java.io.InputStreamReader(
+                            zip.getInputStream(entry),
+                            StandardCharsets.UTF_8
+                    )) {
+                        validatePackConfig(JsonParser.parseReader(reader).getAsJsonObject(), errors);
+                    }
+                    continue;
+                }
+                if (entry.getName().equals("overrides/" + PackControlPublisher.BOOTSTRAP_FILE)) {
+                    if (seenBootstrap) {
+                        errors.add("Duplicate .mrpack bootstrap");
+                    }
+                    seenBootstrap = true;
+                    try (Reader reader = new java.io.InputStreamReader(
+                            zip.getInputStream(entry),
+                            StandardCharsets.UTF_8
+                    )) {
+                        PackBootstrap bootstrap = PackBootstrapJson.fromJson(reader);
+                        validateBootstrap(
+                                bootstrap,
+                                manifest,
+                                FileHashing.inspect(manifestPath).hashes().sha256(),
+                                errors
+                        );
+                    }
                     continue;
                 }
                 OverrideEntry expected = expectedOverrideEntries.get(entry.getName());
@@ -155,7 +193,78 @@ public final class PublisherOutputValidator {
                     errors.add("Missing .mrpack override: " + expected);
                 }
             }
+            if (!seenPackConfig) {
+                errors.add(".mrpack is missing overrides/" + PackControlPublisher.PACK_CONFIG_FILE);
+            }
+            if (!seenBootstrap) {
+                errors.add(".mrpack is missing overrides/" + PackControlPublisher.BOOTSTRAP_FILE);
+            }
         }
+    }
+
+    private static void validatePackConfig(JsonObject config, List<String> errors) {
+        if (!config.has("schemaVersion") || config.get("schemaVersion").getAsInt() != 1) {
+            errors.add(".mrpack packcontrol-pack.json schemaVersion must be 1");
+        }
+        String repository = string(config, "targetGithubRepository");
+        if (repository == null || !repository.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")) {
+            errors.add(".mrpack packcontrol-pack.json has invalid targetGithubRepository");
+        }
+        String channel = string(config, "updateChannel");
+        if (!"stable".equals(channel) && !"beta".equals(channel)) {
+            errors.add(".mrpack packcontrol-pack.json updateChannel must be stable or beta");
+        }
+    }
+
+    private static void validateBootstrap(
+            PackBootstrap bootstrap,
+            PackControlManifest manifest,
+            String manifestSha256,
+            List<String> errors
+    ) {
+        new PackBootstrapValidator().validate(bootstrap).forEach(issue ->
+                errors.add(".mrpack bootstrap " + issue.pointer() + ": " + issue.message())
+        );
+        if (!manifest.metadata().packId().equals(bootstrap.packId())
+                || !manifest.metadata().version().equals(bootstrap.packVersion())
+                || !manifest.metadata().releaseId().equals(bootstrap.releaseId())
+                || !manifestSha256.equalsIgnoreCase(bootstrap.manifestSha256())) {
+            errors.add(".mrpack bootstrap identity does not match manifest");
+        }
+
+        Map<String, org.wodichka.packcontrol.updateformat.InstalledPackState.ManagedFile> expected =
+                new HashMap<>();
+        manifest.files().forEach(file -> expected.put(
+                file.path(),
+                new org.wodichka.packcontrol.updateformat.InstalledPackState.ManagedFile(
+                        file.path(),
+                        file.hashes(),
+                        file.size()
+                )
+        ));
+        manifest.overrides().entries().forEach(file -> expected.put(
+                file.path(),
+                new org.wodichka.packcontrol.updateformat.InstalledPackState.ManagedFile(
+                        file.path(),
+                        file.hashes(),
+                        file.size()
+                )
+        ));
+        if (bootstrap.managedFiles() == null || bootstrap.managedFiles().size() != expected.size()) {
+            errors.add(".mrpack bootstrap managed file count does not match manifest");
+            return;
+        }
+        bootstrap.managedFiles().forEach(file -> {
+            var desired = expected.remove(file.path());
+            if (desired == null
+                    || desired.size() != file.size()
+                    || !hashesEqual(desired.hashes(), file.hashes())) {
+                errors.add(".mrpack bootstrap metadata mismatch for " + file.path());
+            }
+        });
+        expected.keySet().forEach(path ->
+                errors.add(".mrpack bootstrap is missing managed file " + path)
+        );
     }
 
     private static void validateMrpackFiles(
@@ -248,6 +357,12 @@ public final class PublisherOutputValidator {
                 || !expectedHashes.sha512().equalsIgnoreCase(actual.hashes().sha512())) {
             errors.add("Hash mismatch for " + name);
         }
+    }
+
+    private static boolean hashesEqual(Hashes left, Hashes right) {
+        return left.sha1().equalsIgnoreCase(right.sha1())
+                && left.sha256().equalsIgnoreCase(right.sha256())
+                && left.sha512().equalsIgnoreCase(right.sha512());
     }
 
     private static void require(JsonObject object, String property, int value, List<String> errors) {

@@ -43,6 +43,8 @@ Minimal configuration:
   "loaderVersion": "21.1.200",
   "minimumPackControlVersion": "1.0.0",
   "releaseBaseUrl": "https://downloads.example.org/example/1.0.0/",
+  "targetGithubRepository": "example/example-pack",
+  "updateChannel": "stable",
   "optionalMods": [],
   "githubMods": {
     "mods/private-build.jar": {
@@ -60,3 +62,13 @@ The output directory receives `packcontrol-manifest.json`, deterministic
 `overrides.zip`, `<packId>-<version>.mrpack`, and `checksums.txt`. Generation
 happens in a temporary directory. The manifest, both archives, embedded
 override files, and checksums are reread and validated before publication.
+
+The `.mrpack` also receives generated service entries:
+
+- `overrides/packcontrol-pack.json`, configured by
+  `targetGithubRepository` and `updateChannel`;
+- `overrides/.packcontrol/bootstrap.json`, describing the published version
+  and every managed mod or user override.
+
+These entries are not scanned from the instance, are not part of the user
+override list, and are not included in the standalone `overrides.zip`.

@@ -10,6 +10,7 @@ import org.wodichka.packcontrol.updateformat.ManifestJson;
 import org.wodichka.packcontrol.updateformat.ManifestValidationException;
 import org.wodichka.packcontrol.updateformat.ManifestValidator;
 import org.wodichka.packcontrol.updateformat.ModrinthSource;
+import org.wodichka.packcontrol.updateformat.PackBootstrap;
 import org.wodichka.packcontrol.updateformat.PackControlManifest;
 import org.wodichka.packcontrol.updateformat.PackControlManifest.BuildMetadata;
 import org.wodichka.packcontrol.updateformat.PackControlManifest.Environment;
@@ -47,6 +48,8 @@ public final class PackControlPublisher {
     public static final String MANIFEST_FILE = "packcontrol-manifest.json";
     public static final String OVERRIDES_FILE = "overrides.zip";
     public static final String CHECKSUMS_FILE = "checksums.txt";
+    public static final String PACK_CONFIG_FILE = "packcontrol-pack.json";
+    public static final String BOOTSTRAP_FILE = ".packcontrol/bootstrap.json";
 
     private final PackFileSourceRegistry sources;
     private final PublisherScanner scanner;
@@ -173,12 +176,16 @@ public final class PackControlPublisher {
                     ManifestJson.toJson(manifest) + "\n",
                     StandardCharsets.UTF_8
             );
+            String manifestSha256 = FileHashing.inspect(staging.resolve(MANIFEST_FILE)).hashes().sha256();
+            PackBootstrap bootstrap = BootstrapArtifacts.bootstrap(manifest, manifestSha256);
 
             new MrpackExporter().write(
                     staging.resolve(mrpackName),
                     manifest,
                     config.summary(),
-                    inspection.scan().overrides()
+                    inspection.scan().overrides(),
+                    BootstrapArtifacts.packConfig(config),
+                    BootstrapArtifacts.bootstrapJson(bootstrap)
             );
             writeChecksums(staging, mrpackName);
 
@@ -273,6 +280,16 @@ public final class PackControlPublisher {
             throw new PublisherException("MVP publisher supports only minecraftVersion=1.21.1");
         }
         releaseBase(config.releaseBaseUrl());
+        if (blank(config.targetGithubRepository())
+                || !config.targetGithubRepository().matches(
+                        "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
+                )) {
+            throw new PublisherException("targetGithubRepository must be an owner/repository name");
+        }
+        if (!"stable".equalsIgnoreCase(config.updateChannel())
+                && !"beta".equalsIgnoreCase(config.updateChannel())) {
+            throw new PublisherException("updateChannel must be stable or beta");
+        }
         for (String optional : config.optionalMods()) {
             if (!safeConfiguredModPath(optional)) {
                 throw new PublisherException("optionalMods entry must be a safe mods/*.jar path: " + optional);

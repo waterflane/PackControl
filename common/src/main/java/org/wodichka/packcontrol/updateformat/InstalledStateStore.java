@@ -8,9 +8,11 @@ import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.UUID;
 import java.util.Optional;
 
 public final class InstalledStateStore {
@@ -50,6 +52,33 @@ public final class InstalledStateStore {
             GSON.toJson(state, writer);
         }
         moveReplacing(temporary, statePath);
+    }
+
+    /**
+     * Creates the initial state without replacing a state written by another
+     * bootstrap or update process.
+     */
+    public boolean saveNew(InstalledPackState state) throws IOException {
+        Files.createDirectories(statePath.getParent());
+        if (Files.exists(statePath)) {
+            return false;
+        }
+        Path temporary = statePath.resolveSibling(
+                statePath.getFileName() + ".bootstrap-" + UUID.randomUUID() + ".tmp"
+        );
+        try {
+            try (Writer writer = Files.newBufferedWriter(temporary)) {
+                GSON.toJson(state, writer);
+            }
+            try {
+                Files.move(temporary, statePath);
+                return true;
+            } catch (FileAlreadyExistsException exception) {
+                return false;
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
     }
 
     void delete() throws IOException {

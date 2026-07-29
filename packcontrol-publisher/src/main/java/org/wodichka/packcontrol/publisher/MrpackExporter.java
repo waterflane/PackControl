@@ -22,7 +22,9 @@ final class MrpackExporter {
             Path output,
             PackControlManifest manifest,
             String summary,
-            List<ScannedFile> overrides
+            List<ScannedFile> overrides,
+            byte[] packConfig,
+            byte[] bootstrap
     ) throws IOException {
         List<MrpackFile> files = manifest.files().stream().map(this::toMrpackFile).toList();
         Map<String, String> dependencies = new LinkedHashMap<>();
@@ -46,6 +48,14 @@ final class MrpackExporter {
         for (ScannedFile override : overrides) {
             entries.add(ReproducibleZip.Entry.file("overrides/" + override.path(), override.source()));
         }
+        entries.add(ReproducibleZip.Entry.bytes(
+                "overrides/" + PackControlPublisher.PACK_CONFIG_FILE,
+                packConfig
+        ));
+        entries.add(ReproducibleZip.Entry.bytes(
+                "overrides/" + PackControlPublisher.BOOTSTRAP_FILE,
+                bootstrap
+        ));
         ReproducibleZip.write(output, entries);
     }
 

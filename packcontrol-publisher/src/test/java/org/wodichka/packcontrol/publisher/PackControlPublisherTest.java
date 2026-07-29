@@ -78,6 +78,8 @@ class PackControlPublisherTest {
         }
         try (ZipFile mrpack = new ZipFile(firstResult.mrpack().toFile())) {
             assertTrue(mrpack.getEntry("modrinth.index.json") != null);
+            assertTrue(mrpack.getEntry("overrides/packcontrol-pack.json") != null);
+            assertTrue(mrpack.getEntry("overrides/.packcontrol/bootstrap.json") != null);
             assertFalse(mrpack.stream().anyMatch(entry -> entry.getName().endsWith(".jar")));
         }
     }

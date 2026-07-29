@@ -5,6 +5,9 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.wodichka.packcontrol.PackControl;
+import org.wodichka.packcontrol.updateformat.BootstrapAdoptionService;
+import org.wodichka.packcontrol.updateformat.BootstrapAdoptionService.AdoptionResult;
+import org.wodichka.packcontrol.updateformat.BootstrapAdoptionService.Status;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -91,10 +94,32 @@ public final class PackControlConfig {
             USER = readOrCreate(userConfigPath, PackControlUserConfig.defaults(), PackControlUserConfig.class).sanitized();
             PACK = readOrCreate(packConfigPath, PackControlPackConfig.defaults(USER), PackControlPackConfig.class).sanitized(USER);
             save();
+            adoptImportedPack(gameDir);
         } catch (IOException | RuntimeException exception) {
             USER = PackControlUserConfig.defaults();
             PACK = PackControlPackConfig.defaults(USER);
             PackControl.LOGGER.error("Failed to load PackControl configs. Defaults will be used for this session.", exception);
+        }
+    }
+
+    private static void adoptImportedPack(Path gameDir) {
+        AdoptionResult result = new BootstrapAdoptionService().adopt(gameDir);
+        if (result.status() == Status.ADOPTED) {
+            PackControl.LOGGER.info(
+                    "Adopted imported PackControl pack {} {}",
+                    result.installedState().packId(),
+                    result.installedState().packVersion()
+            );
+        } else if (result.status() == Status.INVALID_BOOTSTRAP
+                || result.status() == Status.FILE_MISMATCH
+                || result.status() == Status.WRITE_FAILED) {
+            PackControl.LOGGER.warn(
+                    "Imported PackControl bootstrap was not adopted: {} ({})",
+                    result.status(),
+                    result.issues()
+            );
+        } else if (result.status() == Status.EXISTING_STATE) {
+            PackControl.LOGGER.debug("Skipped stale bootstrap because installed-state.json already exists");
         }
     }
 

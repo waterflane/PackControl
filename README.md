@@ -23,7 +23,18 @@ Install NeoForge and Architectury API, then copy the PackControl NeoForge JAR
 into the instance's `mods` directory. Start the game once so PackControl can
 create its configuration.
 
-The pack owner supplies `packcontrol-pack.json` in the instance root:
+The recommended installation path is to import the `.mrpack` produced by
+PackControl Publisher. The archive supplies both the root
+`packcontrol-pack.json` and `.packcontrol/bootstrap.json`; no service files
+need to be created by hand.
+
+On the first Minecraft start, PackControl hashes every file named by the
+bootstrap. It creates `.packcontrol/installed-state.json` only when all sizes
+and SHA-1/SHA-256/SHA-512 values match. A changed or missing file is left
+unmanaged, and an existing installed state is never replaced by bootstrap.
+
+For development or a manually assembled instance, the minimal pack
+configuration is:
 
 ```json
 {
@@ -46,6 +57,10 @@ prereleases. Public repositories need no GitHub token.
 5. Restart when prompted so PackControl can apply the staged transaction.
 6. If applying fails, use the offered rollback. PackControl does not remove
    files it did not record in its installed state.
+
+PackControl never applies a discovered update while Minecraft is running.
+Downloading to staging and applying the transaction remain separate actions;
+the current MVP applies only through the existing explicit workflow.
 
 Publishing is intentionally not performed by the Minecraft client. Pack owners
 use the standalone [PackControl Publisher](packcontrol-publisher/README.md) to

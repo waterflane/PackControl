@@ -9,6 +9,8 @@
   "loaderVersion": "21.1.233",
   "minimumPackControlVersion": "0.1.0",
   "releaseBaseUrl": "https://downloads.example.invalid/example-pack/1.0.0/",
+  "targetGithubRepository": "example/example-pack",
+  "updateChannel": "stable",
   "optionalMods": [],
   "githubMods": {}
 }
